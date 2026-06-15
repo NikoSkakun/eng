@@ -40,6 +40,18 @@ abstract final class TextNormalizer {
     return buffer.toString();
   }
 
+  static final _edgePunctuation = RegExp(
+    r'^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$',
+    unicode: true,
+  );
+
+  /// Strip leading/trailing non-letter/digit characters (e.g. a trailing comma
+  /// or period, surrounding quotes/brackets) while leaving the inner word(s)
+  /// and any internal apostrophes/hyphens intact: `"oblate,"` -> `oblate`,
+  /// `"(don't)."` -> `don't`.
+  static String trimEdgePunctuation(String input) =>
+      input.replaceAll(_edgePunctuation, '');
+
   /// Normalize an arbitrary string into a canonical lookup/dedup key:
   /// trim, unify punctuation, lower-case, and collapse internal whitespace to
   /// single spaces.

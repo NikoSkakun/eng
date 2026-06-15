@@ -24,6 +24,15 @@ void main() {
       expect(TextNormalizer.tokenize("don't").length, 1);
       expect(TextNormalizer.tokenize('well-known').length, 1);
     });
+
+    test('trimEdgePunctuation strips edge punctuation, keeps inner', () {
+      expect(TextNormalizer.trimEdgePunctuation('oblate,'), 'oblate');
+      expect(TextNormalizer.trimEdgePunctuation('(don\'t).'), "don't");
+      expect(TextNormalizer.trimEdgePunctuation('"word"'), 'word');
+      expect(TextNormalizer.trimEdgePunctuation('well-known'), 'well-known');
+      expect(TextNormalizer.trimEdgePunctuation('“café”!'), 'café');
+      expect(TextNormalizer.trimEdgePunctuation('...'), '');
+    });
   });
 
   group('TermMatcher', () {

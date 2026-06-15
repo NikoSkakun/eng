@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pdfrx/pdfrx.dart';
 
@@ -12,6 +13,7 @@ import '../../state/dictionary_controller.dart';
 import '../../state/library_controller.dart';
 import '../../state/settings_controller.dart';
 import '../../text/term_matcher.dart';
+import '../../text/text_normalizer.dart';
 import 'add_entry_sheet.dart';
 import 'translation_popup.dart';
 
@@ -55,6 +57,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   Timer? _selectionDebounce;
   Timer? _viewSaveDebounce;
 
+  // In-document text search. Created once the viewer/controller is ready
+  // (the searcher's constructor touches the document immediately).
+  PdfTextSearcher? _searcher;
+  List<PdfViewerPagePaintCallback>? _searchPaintCallbacks;
+  final _searchController = TextEditingController();
+  final _searchFocus = FocusNode();
+  bool _searchVisible = false;
+
   // Captured at build time so the pdfrx callbacks (which can fire between our
   // builds, e.g. on scroll) always see the latest values.
   late AppSettings _settings;
@@ -70,11 +80,34 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   @override
   void dispose() {
     _controller.removeListener(_onViewChanged);
+    _searcher?.removeListener(_onSearchChanged);
+    _searcher?.dispose();
+    _searchController.dispose();
+    _searchFocus.dispose();
     _hideTimer?.cancel();
     _selectionDebounce?.cancel();
     _viewSaveDebounce?.cancel();
     super.dispose();
   }
+
+  void _onSearchChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _openSearch() {
+    if (!_searchVisible) setState(() => _searchVisible = true);
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _searchFocus.requestFocus(),
+    );
+  }
+
+  void _closeSearch() {
+    _searcher?.resetTextSearch();
+    _searchController.clear();
+    setState(() => _searchVisible = false);
+  }
+
+  void _toggleSearch() => _searchVisible ? _closeSearch() : _openSearch();
 
   void _rebuildMatcher() {
     final terms = ref
@@ -323,7 +356,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     _selectionDebounce = Timer(const Duration(milliseconds: 300), () async {
       final raw = (await selection.getSelectedText()).trim();
       if (!mounted) return;
-      final text = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+      // Collapse whitespace and drop leading/trailing punctuation (e.g. a
+      // trailing comma/period from double-clicking "oblate,").
+      final text = TextNormalizer.trimEdgePunctuation(
+        raw.replaceAll(RegExp(r'\s+'), ' ').trim(),
+      );
       setState(() => _selectedText = text.isEmpty ? null : text);
     });
   }
@@ -386,6 +423,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           .read(libraryControllerProvider.notifier)
           .updatePageCount(widget.document, count);
       _restoreView(controller, count);
+      if (_searcher == null) {
+        final searcher = PdfTextSearcher(controller)
+          ..addListener(_onSearchChanged);
+        setState(() {
+          _searcher = searcher;
+          _searchPaintCallbacks = [searcher.pageTextMatchPaintCallback];
+        });
+      }
     });
   }
 
@@ -442,85 +487,168 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       _popup = null;
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          widget.document.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        actions: [
-          IconButton(
-            tooltip: _settings.highlightingEnabled
-                ? 'Hide highlights'
-                : 'Show highlights',
-            icon: Icon(
-              _settings.highlightingEnabled
-                  ? Icons.highlight
-                  : Icons.highlight_off,
-            ),
-            onPressed: () => ref
-                .read(settingsControllerProvider.notifier)
-                .mutate(
-                  (s) =>
-                      s.copyWith(highlightingEnabled: !s.highlightingEnabled),
-                ),
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.keyF, control: true):
+            _openSearch,
+        const SingleActivator(LogicalKeyboardKey.keyF, meta: true): _openSearch,
+        const SingleActivator(LogicalKeyboardKey.escape): () {
+          if (_searchVisible) _closeSearch();
+        },
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(
+            widget.document.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-        ],
-      ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          return Stack(
-            key: _stackKey,
-            children: [
-              PdfViewer.file(
-                widget.document.filePath,
-                controller: _controller,
-                params: PdfViewerParams(
-                  textSelectionParams: PdfTextSelectionParams(
-                    enabled: true,
-                    onTextSelectionChange: _onSelectionChange,
+          actions: [
+            IconButton(
+              tooltip: 'Find in document (Ctrl+F)',
+              icon: const Icon(Icons.search),
+              onPressed: _toggleSearch,
+            ),
+            IconButton(
+              tooltip: _settings.highlightingEnabled
+                  ? 'Hide highlights'
+                  : 'Show highlights',
+              icon: Icon(
+                _settings.highlightingEnabled
+                    ? Icons.highlight
+                    : Icons.highlight_off,
+              ),
+              onPressed: () => ref
+                  .read(settingsControllerProvider.notifier)
+                  .mutate(
+                    (s) =>
+                        s.copyWith(highlightingEnabled: !s.highlightingEnabled),
                   ),
-                  viewerOverlayBuilder: (context, size, handleLinkTap) => [
-                    PdfViewerScrollThumb(
-                      controller: _controller,
-                      orientation: ScrollbarOrientation.right,
-                      thumbSize: const Size(40, 48),
-                      thumbBuilder:
-                          (context, thumbSize, pageNumber, controller) {
-                            final scheme = Theme.of(context).colorScheme;
-                            return Material(
-                              color: scheme.primary,
-                              elevation: 2,
-                              borderRadius: const BorderRadius.horizontal(
-                                left: Radius.circular(8),
-                              ),
-                              child: Center(
-                                child: Text(
-                                  '${pageNumber ?? ''}',
-                                  style: TextStyle(
-                                    color: scheme.onPrimary,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
+            ),
+          ],
+          bottom: _searchVisible
+              ? PreferredSize(
+                  preferredSize: const Size.fromHeight(52),
+                  child: _buildSearchBar(context),
+                )
+              : null,
+        ),
+        body: LayoutBuilder(
+          builder: (context, constraints) {
+            return Stack(
+              key: _stackKey,
+              children: [
+                PdfViewer.file(
+                  widget.document.filePath,
+                  controller: _controller,
+                  params: PdfViewerParams(
+                    textSelectionParams: PdfTextSelectionParams(
+                      enabled: true,
+                      onTextSelectionChange: _onSelectionChange,
+                    ),
+                    viewerOverlayBuilder: (context, size, handleLinkTap) => [
+                      PdfViewerScrollThumb(
+                        controller: _controller,
+                        orientation: ScrollbarOrientation.right,
+                        thumbSize: const Size(40, 48),
+                        thumbBuilder:
+                            (context, thumbSize, pageNumber, controller) {
+                              final scheme = Theme.of(context).colorScheme;
+                              return Material(
+                                color: scheme.primary,
+                                elevation: 2,
+                                borderRadius: const BorderRadius.horizontal(
+                                  left: Radius.circular(8),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    '${pageNumber ?? ''}',
+                                    style: TextStyle(
+                                      color: scheme.onPrimary,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 12,
+                                    ),
                                   ),
                                 ),
-                              ),
-                            );
-                          },
-                    ),
-                  ],
-                  pageOverlaysBuilder: _settings.highlightingEnabled
-                      ? _buildPageOverlays
-                      : null,
-                  onGeneralTap: _onGeneralTap,
-                  onViewerReady: _onViewerReady,
+                              );
+                            },
+                      ),
+                    ],
+                    pageOverlaysBuilder: _settings.highlightingEnabled
+                        ? _buildPageOverlays
+                        : null,
+                    pagePaintCallbacks: _searchPaintCallbacks,
+                    onGeneralTap: _onGeneralTap,
+                    onViewerReady: _onViewerReady,
+                  ),
                 ),
+                if (_popup != null) _buildPopup(constraints),
+                if (_selectedText != null) _buildSelectionBar(context),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSearchBar(BuildContext context) {
+    final theme = Theme.of(context);
+    final searcher = _searcher;
+    final hasQuery = _searchController.text.trim().isNotEmpty;
+    final count = searcher?.matches.length ?? 0;
+    final idx = searcher?.currentIndex;
+    final String status;
+    if (!hasQuery) {
+      status = '';
+    } else if (count == 0) {
+      status = (searcher?.isSearching ?? false) ? '…' : 'No results';
+    } else {
+      status = '${(idx ?? 0) + 1}/$count';
+    }
+    return Material(
+      color: theme.colorScheme.surfaceContainerHighest,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 4, 8, 4),
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _searchController,
+                focusNode: _searchFocus,
+                textInputAction: TextInputAction.search,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  border: InputBorder.none,
+                  hintText: 'Find in document',
+                  prefixIcon: Icon(Icons.search, size: 20),
+                ),
+                onChanged: (q) =>
+                    searcher?.startTextSearch(q, caseInsensitive: true),
+                onSubmitted: (_) => searcher?.goToNextMatch(),
               ),
-              if (_popup != null) _buildPopup(constraints),
-              if (_selectedText != null) _buildSelectionBar(context),
-            ],
-          );
-        },
+            ),
+            Text(status, style: theme.textTheme.bodySmall),
+            IconButton(
+              tooltip: 'Previous',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.keyboard_arrow_up),
+              onPressed: count == 0 ? null : () => searcher?.goToPrevMatch(),
+            ),
+            IconButton(
+              tooltip: 'Next',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.keyboard_arrow_down),
+              onPressed: count == 0 ? null : () => searcher?.goToNextMatch(),
+            ),
+            IconButton(
+              tooltip: 'Close (Esc)',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.close),
+              onPressed: _closeSearch,
+            ),
+          ],
+        ),
       ),
     );
   }

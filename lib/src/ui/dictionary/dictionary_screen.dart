@@ -67,6 +67,7 @@ class _DictionaryScreenState extends ConsumerState<DictionaryScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Dictionary')),
       floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'dictionaryAddFab',
         onPressed: _addManual,
         icon: const Icon(Icons.add),
         label: const Text('Add word'),

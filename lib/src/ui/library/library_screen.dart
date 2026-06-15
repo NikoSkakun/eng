@@ -162,6 +162,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             : null,
       ),
       floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'libraryImportFab',
         onPressed: _importing ? null : _import,
         icon: const Icon(Icons.add),
         label: const Text('Import PDF'),
