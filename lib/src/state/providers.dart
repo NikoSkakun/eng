@@ -7,6 +7,7 @@ import '../data/cache_repository.dart';
 import '../data/dictionary_repository.dart';
 import '../data/library_repository.dart';
 import '../data/settings_store.dart';
+import '../services/backup_service.dart';
 import '../services/translation/translation_service.dart';
 import 'settings_controller.dart';
 
@@ -51,6 +52,14 @@ final libraryRepositoryProvider = Provider<LibraryRepository>(
 
 final settingsStoreProvider = Provider<SettingsStore>(
   (ref) => SettingsStore(ref.watch(sharedPreferencesProvider)),
+);
+
+final backupServiceProvider = Provider<BackupService>(
+  (ref) => BackupService(
+    ref.watch(dictionaryRepositoryProvider),
+    ref.watch(libraryRepositoryProvider),
+    ref.watch(libraryDirectoryProvider),
+  ),
 );
 
 /// Translation/definition service; recreated when settings change so it always

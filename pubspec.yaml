@@ -47,6 +47,7 @@ dependencies:
   url_launcher: ^6.3.2
   sqlite3: ^3.3.3
   desktop_drop: ^0.7.1
+  archive: ^4.0.9
 
 dev_dependencies:
   flutter_test:

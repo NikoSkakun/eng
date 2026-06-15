@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pdfrx/pdfrx.dart';
@@ -272,11 +273,29 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     if (saved == true && mounted) setState(() => _selectedText = null);
   }
 
+  static bool get _isDesktop =>
+      defaultTargetPlatform == TargetPlatform.linux ||
+      defaultTargetPlatform == TargetPlatform.macOS ||
+      defaultTargetPlatform == TargetPlatform.windows;
+
   bool _onGeneralTap(
     BuildContext context,
     PdfViewerController controller,
     PdfViewerGeneralTapHandlerDetails details,
   ) {
+    // Desktop: double-click selects the word under the cursor (pdfrx has no
+    // built-in double-tap selection). The selection-change callback then
+    // surfaces the "Add" bar.
+    if (details.type == PdfViewerGeneralTapType.doubleTap) {
+      if (_isDesktop && details.tapOn != PdfViewerPart.background) {
+        final selection = controller.textSelectionDelegate;
+        if (selection.isTextSelectionEnabled) {
+          unawaited(selection.selectWord(details.documentPosition));
+          return true; // handled
+        }
+      }
+      return false;
+    }
     if (details.type == PdfViewerGeneralTapType.tap && _popup != null) {
       setState(() => _popup = null);
     }

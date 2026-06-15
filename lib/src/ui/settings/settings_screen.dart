@@ -1,10 +1,22 @@
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../data/settings_store.dart';
+import '../../services/backup_service.dart';
+import '../../state/dictionary_controller.dart';
+import '../../state/library_controller.dart';
+import '../../state/providers.dart';
 import '../../state/settings_controller.dart';
 import '../../util/languages.dart';
+
+const XTypeGroup _zipTypeGroup = XTypeGroup(
+  label: 'eng backup (.zip)',
+  extensions: ['zip'],
+  mimeTypes: ['application/zip'],
+  uniformTypeIdentifiers: ['public.zip-archive'],
+);
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -59,6 +71,86 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           context,
         ).showSnackBar(SnackBar(content: Text('Could not open $url')));
       }
+    }
+  }
+
+  void _snack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _export() async {
+    final opts = await _BackupOptionsDialog.show(
+      context,
+      title: 'Export data',
+      confirmLabel: 'Export',
+    );
+    if (opts == null || !mounted) return;
+    if (!opts.library && !opts.dictionary) {
+      _snack('Select at least one kind of data to export.');
+      return;
+    }
+    final stamp = DateTime.now().toIso8601String().split('T').first;
+    final location = await getSaveLocation(
+      acceptedTypeGroups: const [_zipTypeGroup],
+      suggestedName: 'eng-backup-$stamp.zip',
+    );
+    if (location == null || !mounted) return;
+    var path = location.path;
+    if (!path.toLowerCase().endsWith('.zip')) path = '$path.zip';
+    try {
+      final result = await ref
+          .read(backupServiceProvider)
+          .exportTo(
+            path,
+            includeLibrary: opts.library,
+            includeDictionary: opts.dictionary,
+          );
+      _snack(
+        'Exported ${result.documents} document(s) and ${result.entries} entry(ies).',
+      );
+    } catch (e) {
+      _snack('Export failed: $e');
+    }
+  }
+
+  Future<void> _import() async {
+    final file = await openFile(acceptedTypeGroups: const [_zipTypeGroup]);
+    if (file == null || !mounted) return;
+    final service = ref.read(backupServiceProvider);
+    final BackupContents info;
+    try {
+      info = await service.inspect(file.path);
+    } catch (e) {
+      _snack('Not a valid backup: $e');
+      return;
+    }
+    if (!mounted) return;
+    final opts = await _BackupOptionsDialog.show(
+      context,
+      title: 'Import data',
+      confirmLabel: 'Import',
+      contents: info,
+    );
+    if (opts == null || !mounted) return;
+    try {
+      final result = await service.importFrom(
+        file.path,
+        includeLibrary: opts.library,
+        includeDictionary: opts.dictionary,
+      );
+      ref.invalidate(libraryControllerProvider);
+      ref.invalidate(dictionaryControllerProvider);
+      final skipped = result.skipped > 0
+          ? ' (${result.skipped} duplicate(s) skipped)'
+          : '';
+      _snack(
+        'Imported ${result.documents} document(s) and ${result.entries} entry(ies)$skipped.',
+      );
+    } catch (e) {
+      _snack('Import failed: $e');
     }
   }
 
@@ -181,6 +273,22 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
               ),
             ),
+          const Divider(),
+          _SectionHeader('Backup & restore'),
+          ListTile(
+            leading: const Icon(Icons.upload_file_outlined),
+            title: const Text('Export data…'),
+            subtitle: const Text('Save your library and dictionary to a file'),
+            onTap: _export,
+          ),
+          ListTile(
+            leading: const Icon(Icons.download_outlined),
+            title: const Text('Import data…'),
+            subtitle: const Text(
+              'Restore from a backup made on another device',
+            ),
+            onTap: _import,
+          ),
           const Divider(),
           _SectionHeader('About & data sources'),
           const Padding(
@@ -323,6 +431,108 @@ class _SectionHeader extends StatelessWidget {
           fontWeight: FontWeight.bold,
         ),
       ),
+    );
+  }
+}
+
+/// Which data the user chose to include in an export/import.
+class _BackupOptions {
+  const _BackupOptions(this.library, this.dictionary);
+  final bool library;
+  final bool dictionary;
+}
+
+/// Dialog letting the user include/exclude Library and Dictionary data.
+///
+/// For export, [contents] is null and both toggles default on. For import,
+/// [contents] reflects what's actually in the file; absent sections are
+/// disabled, and counts are shown.
+class _BackupOptionsDialog extends StatefulWidget {
+  const _BackupOptionsDialog({
+    required this.title,
+    required this.confirmLabel,
+    this.contents,
+  });
+
+  final String title;
+  final String confirmLabel;
+  final BackupContents? contents;
+
+  static Future<_BackupOptions?> show(
+    BuildContext context, {
+    required String title,
+    required String confirmLabel,
+    BackupContents? contents,
+  }) {
+    return showDialog<_BackupOptions>(
+      context: context,
+      builder: (_) => _BackupOptionsDialog(
+        title: title,
+        confirmLabel: confirmLabel,
+        contents: contents,
+      ),
+    );
+  }
+
+  @override
+  State<_BackupOptionsDialog> createState() => _BackupOptionsDialogState();
+}
+
+class _BackupOptionsDialogState extends State<_BackupOptionsDialog> {
+  late bool _library = widget.contents?.hasLibrary ?? true;
+  late bool _dictionary = widget.contents?.hasDictionary ?? true;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.contents;
+    final libAvailable = c == null || c.hasLibrary;
+    final dictAvailable = c == null || c.hasDictionary;
+    final libSub = c == null
+        ? 'Documents and reading positions'
+        : '${c.documentCount} document(s)';
+    final dictSub = c == null
+        ? 'Words, translations and definitions'
+        : '${c.dictionaryCount} entry(ies)';
+
+    return AlertDialog(
+      title: Text(widget.title),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _library && libAvailable,
+            onChanged: libAvailable
+                ? (v) => setState(() => _library = v)
+                : null,
+            title: const Text('Library'),
+            subtitle: Text(libAvailable ? libSub : 'Not in this backup'),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _dictionary && dictAvailable,
+            onChanged: dictAvailable
+                ? (v) => setState(() => _dictionary = v)
+                : null,
+            title: const Text('Dictionary'),
+            subtitle: Text(dictAvailable ? dictSub : 'Not in this backup'),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: (_library || _dictionary)
+              ? () => Navigator.of(
+                  context,
+                ).pop(_BackupOptions(_library, _dictionary))
+              : null,
+          child: Text(widget.confirmLabel),
+        ),
+      ],
     );
   }
 }
