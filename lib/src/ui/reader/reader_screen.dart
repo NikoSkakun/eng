@@ -167,6 +167,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     if (occ.isEmpty) return const [];
 
     final defaultColor = Color(_settings.highlightColor);
+    final showGloss = _settings.inlineTranslationEnabled;
+    final glossColor = Color(_settings.inlineGlossColor);
     final hits = <_HitRect>[];
     final widgets = <Widget>[];
 
@@ -176,9 +178,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       final color = entry.colorValue != null
           ? Color(entry.colorValue!)
           : defaultColor;
+      Rect? firstRect;
       for (final pr in o.rects) {
         final r = _mapRect(pr, pageRect, page);
         if (r.width <= 0 || r.height <= 0) continue;
+        firstRect ??= r;
         hits.add(_HitRect(r, entry));
         widgets.add(
           Positioned.fromRect(
@@ -202,6 +206,15 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           ),
         );
       }
+
+      // Inline translation gloss under the first line of the occurrence.
+      final translation = entry.translation?.trim();
+      if (showGloss &&
+          firstRect != null &&
+          translation != null &&
+          translation.isNotEmpty) {
+        widgets.add(_buildGloss(firstRect, translation, glossColor, pageRect));
+      }
     }
 
     // A single transparent hover layer for the whole page. It tracks the mouse
@@ -219,6 +232,37 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       ),
     );
     return widgets;
+  }
+
+  /// A small interlinear translation rendered just below [wordRect], sized to
+  /// fit between lines. Pointer-transparent so it doesn't affect hover/tap.
+  Widget _buildGloss(Rect wordRect, String text, Color color, Rect pageRect) {
+    final fontSize = (wordRect.height * 0.46).clamp(7.0, 80.0);
+    final maxWidth = (pageRect.width - wordRect.left).clamp(
+      8.0,
+      pageRect.width,
+    );
+    return Positioned(
+      left: wordRect.left,
+      top: wordRect.bottom,
+      child: IgnorePointer(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxWidth),
+          child: Text(
+            text,
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: color,
+              fontSize: fontSize,
+              height: 1.0,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   void _onHover(Offset pageLocal, Offset global, List<_HitRect> hits) {

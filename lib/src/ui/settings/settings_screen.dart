@@ -41,6 +41,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     0x66FF7043, // orange
   ];
 
+  /// Preset opaque colors for the inline translation glosses (text color).
+  static const _glossColorPresets = <int>[
+    0xFF1565C0, // blue
+    0xFFC62828, // red
+    0xFF2E7D32, // green
+    0xFF6A1B9A, // purple
+    0xFFAD1457, // pink
+    0xFF00838F, // teal
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -231,6 +241,59 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ],
             ),
           ),
+          SwitchListTile(
+            title: const Text('Show translation under each word'),
+            subtitle: const Text(
+              'Small inline gloss between the lines, for highlighted terms that '
+              'have a translation',
+            ),
+            value: s.inlineTranslationEnabled,
+            onChanged: (v) =>
+                _mutate((x) => x.copyWith(inlineTranslationEnabled: v)),
+          ),
+          if (s.inlineTranslationEnabled) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: Text(
+                'Inline translation color',
+                style: theme.textTheme.bodyMedium,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Wrap(
+                spacing: 12,
+                children: [
+                  for (final c in _glossColorPresets)
+                    GestureDetector(
+                      onTap: () =>
+                          _mutate((x) => x.copyWith(inlineGlossColor: c)),
+                      child: Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: Color(c),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: s.inlineGlossColor == c
+                                ? theme.colorScheme.primary
+                                : theme.colorScheme.outlineVariant,
+                            width: s.inlineGlossColor == c ? 3 : 1,
+                          ),
+                        ),
+                        child: s.inlineGlossColor == c
+                            ? const Icon(
+                                Icons.check,
+                                size: 18,
+                                color: Colors.white,
+                              )
+                            : null,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
           const Divider(),
           _SectionHeader('Translation provider'),
           ListTile(

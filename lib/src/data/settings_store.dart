@@ -38,6 +38,10 @@ enum DefinitionProviderId {
 /// Default highlight color (semi-transparent amber). ARGB.
 const int kDefaultHighlightColor = 0x66FFC107;
 
+/// Default color (opaque blue) for the small inline translations shown under
+/// highlighted words.
+const int kDefaultInlineGlossColor = 0xFF1565C0;
+
 /// Immutable snapshot of all user settings.
 class AppSettings {
   const AppSettings({
@@ -52,6 +56,8 @@ class AppSettings {
     this.highlightingEnabled = true,
     this.autoSuggestEnabled = true,
     this.highlightColor = kDefaultHighlightColor,
+    this.inlineTranslationEnabled = false,
+    this.inlineGlossColor = kDefaultInlineGlossColor,
   });
 
   /// Language of the documents being read (and of definitions).
@@ -78,6 +84,13 @@ class AppSettings {
   /// 32-bit ARGB color used for highlights without a per-entry color.
   final int highlightColor;
 
+  /// Whether to render each highlighted term's translation in a small font
+  /// just under the word (interlinear gloss).
+  final bool inlineTranslationEnabled;
+
+  /// 32-bit ARGB color of the inline translation glosses.
+  final int inlineGlossColor;
+
   /// Whether definitions can be looked up given the current learning language.
   bool get definitionsAvailable =>
       definitionProvider != DefinitionProviderId.none &&
@@ -95,6 +108,8 @@ class AppSettings {
     bool? highlightingEnabled,
     bool? autoSuggestEnabled,
     int? highlightColor,
+    bool? inlineTranslationEnabled,
+    int? inlineGlossColor,
   }) {
     return AppSettings(
       learningLang: learningLang ?? this.learningLang,
@@ -108,6 +123,9 @@ class AppSettings {
       highlightingEnabled: highlightingEnabled ?? this.highlightingEnabled,
       autoSuggestEnabled: autoSuggestEnabled ?? this.autoSuggestEnabled,
       highlightColor: highlightColor ?? this.highlightColor,
+      inlineTranslationEnabled:
+          inlineTranslationEnabled ?? this.inlineTranslationEnabled,
+      inlineGlossColor: inlineGlossColor ?? this.inlineGlossColor,
     );
   }
 }
@@ -129,6 +147,8 @@ class SettingsStore {
   static const _kHighlighting = 'highlightingEnabled';
   static const _kAutoSuggest = 'autoSuggestEnabled';
   static const _kHighlightColor = 'highlightColor';
+  static const _kInlineTranslation = 'inlineTranslationEnabled';
+  static const _kInlineGlossColor = 'inlineGlossColor';
 
   AppSettings load() {
     return AppSettings(
@@ -147,6 +167,9 @@ class SettingsStore {
       highlightingEnabled: _prefs.getBool(_kHighlighting) ?? true,
       autoSuggestEnabled: _prefs.getBool(_kAutoSuggest) ?? true,
       highlightColor: _prefs.getInt(_kHighlightColor) ?? kDefaultHighlightColor,
+      inlineTranslationEnabled: _prefs.getBool(_kInlineTranslation) ?? false,
+      inlineGlossColor:
+          _prefs.getInt(_kInlineGlossColor) ?? kDefaultInlineGlossColor,
     );
   }
 
@@ -162,5 +185,7 @@ class SettingsStore {
     await _prefs.setBool(_kHighlighting, s.highlightingEnabled);
     await _prefs.setBool(_kAutoSuggest, s.autoSuggestEnabled);
     await _prefs.setInt(_kHighlightColor, s.highlightColor);
+    await _prefs.setBool(_kInlineTranslation, s.inlineTranslationEnabled);
+    await _prefs.setInt(_kInlineGlossColor, s.inlineGlossColor);
   }
 }
