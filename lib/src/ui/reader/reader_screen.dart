@@ -35,6 +35,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   final Map<int, List<_Occurrence>> _occurrencesByPage = {};
   final Set<int> _loadingPages = {};
 
+  /// Per-page count of empty-text extraction attempts (progressive loading).
+  final Map<int, int> _emptyTextRetries = {};
+  static const int _maxEmptyTextRetries = 8;
+
   TermMatcher? _matcher;
 
   /// Incremented whenever the matcher is rebuilt (dictionary/language change),
@@ -72,6 +76,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     _matcherGeneration++;
     _occurrencesByPage.clear();
     _loadingPages.clear();
+    _emptyTextRetries.clear();
   }
 
   Future<void> _ensurePageComputed(PdfPage page) async {
@@ -84,12 +89,32 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       return;
     }
     _loadingPages.add(n);
+    List<_Occurrence>? result;
     try {
       final pageText = await page.loadStructuredText();
-      // dictionary/language changed mid-flight
       if (!mounted || gen != _matcherGeneration) {
+        _loadingPages.remove(n);
         return;
       }
+      // While a large document is still progressively loading, a page's text
+      // can come back empty before it's ready. Don't cache that empty result
+      // (which would leave the page permanently un-highlighted) — retry a few
+      // times with backoff so highlights appear once the text loads.
+      if (pageText.fullText.isEmpty &&
+          (_emptyTextRetries[n] ?? 0) < _maxEmptyTextRetries) {
+        final attempt = (_emptyTextRetries[n] ?? 0) + 1;
+        _emptyTextRetries[n] = attempt;
+        _loadingPages.remove(n);
+        Future.delayed(Duration(milliseconds: 200 * attempt), () {
+          if (mounted &&
+              gen == _matcherGeneration &&
+              !_occurrencesByPage.containsKey(n)) {
+            setState(() {}); // re-invoke the overlay builder → recompute
+          }
+        });
+        return;
+      }
+
       final matches = matcher.findMatches(pageText.fullText);
       final occ = <_Occurrence>[];
       for (final m in matches) {
@@ -108,19 +133,18 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           // Skip occurrences whose ranges can't be resolved to rects.
         }
       }
-      if (gen != _matcherGeneration) return;
-      _occurrencesByPage[n] = occ;
+      result = occ;
     } catch (_) {
-      if (gen != _matcherGeneration) return;
-      _occurrencesByPage[n] = const <_Occurrence>[];
-    } finally {
-      // Only the current-generation compute owns the page's loading slot and
-      // its repaint; a stale compute leaves the fresh one's state untouched.
-      if (gen == _matcherGeneration) {
-        _loadingPages.remove(n);
-        if (mounted) setState(() {});
-      }
+      result = const <_Occurrence>[];
     }
+    // Only the current-generation compute owns the page's slot and repaint.
+    if (!mounted || gen != _matcherGeneration) {
+      _loadingPages.remove(n);
+      return;
+    }
+    _occurrencesByPage[n] = result;
+    _loadingPages.remove(n);
+    setState(() {});
   }
 
   /// Map a PDF-space rect (bottom-left origin) to the page overlay's
