@@ -91,10 +91,14 @@ void main() {
       );
       expect(saved.id, greaterThan(0));
 
-      repo.update(saved.copyWith(lastPage: 5, pageCount: 42));
+      expect(saved.viewMatrix, isNull);
+      repo.update(
+        saved.copyWith(lastPage: 5, pageCount: 42, viewMatrix: '1.0,0.0,2.5'),
+      );
       final got = repo.getById(saved.id)!;
       expect(got.lastPage, 5);
       expect(got.pageCount, 42);
+      expect(got.viewMatrix, '1.0,0.0,2.5'); // exact scroll/zoom persists
 
       repo.delete(saved.id);
       expect(repo.getAll(), isEmpty);

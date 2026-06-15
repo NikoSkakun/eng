@@ -92,6 +92,17 @@ class LibraryController extends Notifier<List<LibraryDocument>> {
     _reload();
   }
 
+  /// Persist the exact reading view (page + serialized pdfrx matrix) so it can
+  /// be restored when the document is reopened.
+  void saveView(int docId, {required int page, required String viewMatrix}) {
+    final repo = ref.read(libraryRepositoryProvider);
+    final current = repo.getById(docId);
+    if (current == null) return;
+    if (current.lastPage == page && current.viewMatrix == viewMatrix) return;
+    repo.update(current.copyWith(lastPage: page, viewMatrix: viewMatrix));
+    _reload();
+  }
+
   void rename(LibraryDocument doc, String title) {
     final repo = ref.read(libraryRepositoryProvider);
     final current = repo.getById(doc.id) ?? doc;

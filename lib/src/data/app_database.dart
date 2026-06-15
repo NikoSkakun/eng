@@ -13,7 +13,7 @@ class AppDatabase {
   final Database db;
 
   /// Bump when the schema changes and add a branch in [_migrate].
-  static const int schemaVersion = 1;
+  static const int schemaVersion = 2;
 
   /// Open (creating if needed) the database at [path] and run migrations.
   factory AppDatabase.open(String path) {
@@ -34,7 +34,7 @@ class AppDatabase {
 
   static void _migrate(Database db) {
     var version = db.userVersion;
-    if (version == schemaVersion) return;
+    if (version >= schemaVersion) return;
     if (version == 0) {
       db.execute('''
         CREATE TABLE documents(
@@ -45,7 +45,8 @@ class AppDatabase {
           page_count INTEGER NOT NULL DEFAULT 0,
           added_at INTEGER NOT NULL,
           last_opened_at INTEGER,
-          last_page INTEGER NOT NULL DEFAULT 1
+          last_page INTEGER NOT NULL DEFAULT 1,
+          view_matrix TEXT
         );
       ''');
       db.execute('''
@@ -78,9 +79,14 @@ class AppDatabase {
           created_at INTEGER NOT NULL
         );
       ''');
-      version = 1;
+      // Fresh install already includes every column up to the latest version.
+      version = schemaVersion;
     }
-    // Future migrations: `if (version == 1) { ...; version = 2; }`
+    if (version == 1) {
+      // v1 -> v2: per-document saved view (exact scroll position + zoom).
+      db.execute('ALTER TABLE documents ADD COLUMN view_matrix TEXT;');
+      version = 2;
+    }
     db.userVersion = schemaVersion;
   }
 

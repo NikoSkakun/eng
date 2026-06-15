@@ -28,8 +28,8 @@ class LibraryRepository {
   LibraryDocument insert(LibraryDocument doc) {
     _db.execute(
       '''
-      INSERT INTO documents(title, file_path, original_path, page_count, added_at, last_opened_at, last_page)
-      VALUES(?,?,?,?,?,?,?);
+      INSERT INTO documents(title, file_path, original_path, page_count, added_at, last_opened_at, last_page, view_matrix)
+      VALUES(?,?,?,?,?,?,?,?);
       ''',
       [
         doc.title,
@@ -39,6 +39,7 @@ class LibraryRepository {
         doc.addedAt.millisecondsSinceEpoch,
         doc.lastOpenedAt?.millisecondsSinceEpoch,
         doc.lastPage,
+        doc.viewMatrix,
       ],
     );
     return doc.copyWith(id: _db.lastInsertRowId);
@@ -49,7 +50,7 @@ class LibraryRepository {
       '''
       UPDATE documents SET
         title = ?, file_path = ?, original_path = ?, page_count = ?,
-        last_opened_at = ?, last_page = ?
+        last_opened_at = ?, last_page = ?, view_matrix = ?
       WHERE id = ?;
       ''',
       [
@@ -59,6 +60,7 @@ class LibraryRepository {
         doc.pageCount,
         doc.lastOpenedAt?.millisecondsSinceEpoch,
         doc.lastPage,
+        doc.viewMatrix,
         doc.id,
       ],
     );
@@ -81,6 +83,7 @@ class LibraryRepository {
           ? null
           : DateTime.fromMillisecondsSinceEpoch(lastOpened),
       lastPage: row['last_page'] as int,
+      viewMatrix: row['view_matrix'] as String?,
     );
   }
 }

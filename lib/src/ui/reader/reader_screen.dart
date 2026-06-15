@@ -53,7 +53,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
   String? _selectedText;
   Timer? _selectionDebounce;
-  Timer? _positionDebounce;
+  Timer? _viewSaveDebounce;
 
   // Captured at build time so the pdfrx callbacks (which can fire between our
   // builds, e.g. on scroll) always see the latest values.
@@ -61,10 +61,18 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   late DictionaryState _dictState;
 
   @override
+  void initState() {
+    super.initState();
+    // Persist the exact view (scroll + zoom) as the user pans/zooms.
+    _controller.addListener(_onViewChanged);
+  }
+
+  @override
   void dispose() {
+    _controller.removeListener(_onViewChanged);
     _hideTimer?.cancel();
     _selectionDebounce?.cancel();
-    _positionDebounce?.cancel();
+    _viewSaveDebounce?.cancel();
     super.dispose();
   }
 
@@ -373,25 +381,52 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   void _onViewerReady(PdfDocument document, PdfViewerController controller) {
     final count = document.pages.length;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!mounted || !controller.isReady) return;
       ref
           .read(libraryControllerProvider.notifier)
           .updatePageCount(widget.document, count);
-      final last = widget.document.lastPage;
-      if (last > 1 && last <= count) {
-        controller.goToPage(pageNumber: last);
-      }
+      _restoreView(controller, count);
     });
   }
 
-  void _onPageChanged(int? pageNumber) {
-    if (pageNumber == null) return;
-    _positionDebounce?.cancel();
-    _positionDebounce = Timer(const Duration(milliseconds: 700), () {
+  /// Restore the exact saved view (scroll + zoom); fall back to the last page.
+  void _restoreView(PdfViewerController controller, int pageCount) {
+    final saved = widget.document.viewMatrix;
+    final matrix = saved == null ? null : _parseMatrix(saved);
+    if (matrix != null) {
+      controller.value = matrix; // setter clamps to the safe range
+      return;
+    }
+    final last = widget.document.lastPage;
+    if (last > 1 && last <= pageCount) {
+      controller.goToPage(pageNumber: last);
+    }
+  }
+
+  /// Save the current view (page + serialized matrix), debounced.
+  void _onViewChanged() {
+    if (!_controller.isReady) return;
+    _viewSaveDebounce?.cancel();
+    _viewSaveDebounce = Timer(const Duration(milliseconds: 600), () {
+      if (!mounted || !_controller.isReady) return;
       ref
           .read(libraryControllerProvider.notifier)
-          .recordOpened(widget.document, page: pageNumber);
+          .saveView(
+            widget.document.id,
+            page: _controller.pageNumber ?? widget.document.lastPage,
+            viewMatrix: _controller.value.storage.join(','),
+          );
     });
+  }
+
+  static Matrix4? _parseMatrix(String s) {
+    try {
+      final parts = s.split(',').map(double.parse).toList(growable: false);
+      if (parts.length != 16) return null;
+      return Matrix4.fromList(parts);
+    } catch (_) {
+      return null;
+    }
   }
 
   @override
@@ -479,7 +514,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                       : null,
                   onGeneralTap: _onGeneralTap,
                   onViewerReady: _onViewerReady,
-                  onPageChanged: _onPageChanged,
                 ),
               ),
               if (_popup != null) _buildPopup(constraints),

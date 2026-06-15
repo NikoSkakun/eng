@@ -48,6 +48,7 @@ dependencies:
   sqlite3: ^3.3.3
   desktop_drop: ^0.7.1
   archive: ^4.0.9
+  window_manager: ^0.5.1
 
 dev_dependencies:
   flutter_test:

@@ -13,6 +13,7 @@ class LibraryDocument {
     required this.addedAt,
     this.lastOpenedAt,
     this.lastPage = 1,
+    this.viewMatrix,
   });
 
   final int id;
@@ -35,6 +36,10 @@ class LibraryDocument {
   /// 1-based page the reader was last on (reading position).
   final int lastPage;
 
+  /// Serialized pdfrx view matrix (16 comma-separated doubles) capturing the
+  /// exact scroll position and zoom; null until the document has been viewed.
+  final String? viewMatrix;
+
   LibraryDocument copyWith({
     int? id,
     String? title,
@@ -44,6 +49,7 @@ class LibraryDocument {
     DateTime? addedAt,
     Object? lastOpenedAt = _sentinel,
     int? lastPage,
+    Object? viewMatrix = _sentinel,
   }) {
     return LibraryDocument(
       id: id ?? this.id,
@@ -58,6 +64,9 @@ class LibraryDocument {
           ? this.lastOpenedAt
           : lastOpenedAt as DateTime?,
       lastPage: lastPage ?? this.lastPage,
+      viewMatrix: viewMatrix == _sentinel
+          ? this.viewMatrix
+          : viewMatrix as String?,
     );
   }
 
