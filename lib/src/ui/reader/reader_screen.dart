@@ -364,26 +364,27 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                       controller: _controller,
                       orientation: ScrollbarOrientation.right,
                       thumbSize: const Size(40, 48),
-                      thumbBuilder: (context, thumbSize, pageNumber, controller) {
-                        final scheme = Theme.of(context).colorScheme;
-                        return Material(
-                          color: scheme.primary,
-                          elevation: 2,
-                          borderRadius: const BorderRadius.horizontal(
-                            left: Radius.circular(8),
-                          ),
-                          child: Center(
-                            child: Text(
-                              '${pageNumber ?? ''}',
-                              style: TextStyle(
-                                color: scheme.onPrimary,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
+                      thumbBuilder:
+                          (context, thumbSize, pageNumber, controller) {
+                            final scheme = Theme.of(context).colorScheme;
+                            return Material(
+                              color: scheme.primary,
+                              elevation: 2,
+                              borderRadius: const BorderRadius.horizontal(
+                                left: Radius.circular(8),
                               ),
-                            ),
-                          ),
-                        );
-                      },
+                              child: Center(
+                                child: Text(
+                                  '${pageNumber ?? ''}',
+                                  style: TextStyle(
+                                    color: scheme.onPrimary,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
                     ),
                   ],
                   pageOverlaysBuilder: _settings.highlightingEnabled

@@ -1,3 +1,4 @@
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,6 +17,48 @@ class LibraryScreen extends ConsumerStatefulWidget {
 
 class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   bool _importing = false;
+  bool _dragging = false;
+
+  /// Import every PDF among the dropped items (from a file-manager drag).
+  Future<void> _onDrop(List<DropItem> items) async {
+    setState(() => _dragging = false);
+    if (_importing) return;
+    final pdfs = items
+        .where((e) => e.path.toLowerCase().endsWith('.pdf'))
+        .toList();
+    if (pdfs.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Only PDF files can be added.')),
+      );
+      return;
+    }
+    setState(() => _importing = true);
+    final notifier = ref.read(libraryControllerProvider.notifier);
+    var imported = 0;
+    LibraryDocument? last;
+    try {
+      for (final f in pdfs) {
+        last = await notifier.importFromPath(f.path);
+        imported++;
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Could not import: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _importing = false);
+    }
+    if (!mounted) return;
+    if (imported == 1 && last != null) {
+      await _open(last);
+    } else if (imported > 1) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Imported $imported PDFs.')));
+    }
+  }
 
   Future<void> _import() async {
     if (_importing) return;
@@ -123,19 +166,75 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         icon: const Icon(Icons.add),
         label: const Text('Import PDF'),
       ),
-      body: docs.isEmpty
-          ? _EmptyLibrary(onImport: _importing ? null : _import)
-          : ListView.separated(
-              padding: const EdgeInsets.all(12),
-              itemCount: docs.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 4),
-              itemBuilder: (context, i) => _DocumentTile(
-                doc: docs[i],
-                onOpen: () => _open(docs[i]),
-                onRename: () => _rename(docs[i]),
-                onRemove: () => _remove(docs[i]),
+      body: DropTarget(
+        onDragEntered: (_) => setState(() => _dragging = true),
+        onDragExited: (_) => setState(() => _dragging = false),
+        onDragDone: (detail) => _onDrop(detail.files),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: docs.isEmpty
+                  ? _EmptyLibrary(onImport: _importing ? null : _import)
+                  : ListView.separated(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: docs.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 4),
+                      itemBuilder: (context, i) => _DocumentTile(
+                        doc: docs[i],
+                        onOpen: () => _open(docs[i]),
+                        onRename: () => _rename(docs[i]),
+                        onRemove: () => _remove(docs[i]),
+                      ),
+                    ),
+            ),
+            if (_dragging) const _DropOverlay(),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Visual hint shown while a file is dragged over the library.
+class _DropOverlay extends StatelessWidget {
+  const _DropOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: scheme.primary.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: scheme.primary, width: 2),
+            ),
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.file_download_outlined,
+                    size: 56,
+                    color: scheme.primary,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Drop PDF files to add them',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: scheme.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
               ),
             ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -210,8 +309,9 @@ class _EmptyLibrary extends StatelessWidget {
             Text('Your library is empty', style: theme.textTheme.titleLarge),
             const SizedBox(height: 8),
             Text(
-              'Import a PDF to start reading. Select an unknown word or phrase '
-              'to add a translation — it will be highlighted everywhere it appears.',
+              'Import a PDF — or drag one in from your file manager — to start '
+              'reading. Select an unknown word or phrase to add a translation; '
+              'it will be highlighted everywhere it appears.',
               textAlign: TextAlign.center,
               style: theme.textTheme.bodyMedium,
             ),
