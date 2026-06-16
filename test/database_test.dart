@@ -163,17 +163,29 @@ void main() {
       expect(after.folderId, isNull);
     });
 
-    test('folders are ordered case-insensitively by name', () {
+    test('nested folders and positions round-trip', () {
       final repo = LibraryRepository(db);
       final now = DateTime.now();
-      for (final name in ['banana', 'Apple', 'cherry']) {
-        repo.insertFolder(LibraryFolder(id: 0, name: name, createdAt: now));
-      }
-      expect(repo.getAllFolders().map((f) => f.name).toList(), [
-        'Apple',
-        'banana',
-        'cherry',
-      ]);
+      final parent = repo.insertFolder(
+        LibraryFolder(id: 0, name: 'Parent', createdAt: now, position: 0),
+      );
+      final child = repo.insertFolder(
+        LibraryFolder(
+          id: 0,
+          name: 'Child',
+          createdAt: now,
+          parentId: parent.id,
+          position: 3,
+        ),
+      );
+      final got = repo.getAllFolders().firstWhere((f) => f.id == child.id);
+      expect(got.parentId, parent.id);
+      expect(got.position, 3);
+
+      repo.setFolderParent(child.id, null, position: 1);
+      final moved = repo.getAllFolders().firstWhere((f) => f.id == child.id);
+      expect(moved.parentId, isNull);
+      expect(moved.position, 1);
     });
 
     test('deleting a document cascades to its scoped dictionary entries', () {

@@ -17,7 +17,7 @@ const XTypeGroup _pdfTypeGroup = XTypeGroup(
 );
 
 // ---------------------------------------------------------------------------
-// Shared document/folder operations (used by both the root and folder views).
+// Shared item operations
 // ---------------------------------------------------------------------------
 
 Future<void> _openDoc(
@@ -29,6 +29,12 @@ Future<void> _openDoc(
   await Navigator.of(
     context,
   ).push(MaterialPageRoute(builder: (_) => ReaderScreen(document: doc)));
+}
+
+void _openFolder(BuildContext context, LibraryFolder folder) {
+  Navigator.of(
+    context,
+  ).push(MaterialPageRoute(builder: (_) => FolderScreen(folderId: folder.id)));
 }
 
 Future<void> _renameDoc(
@@ -64,16 +70,75 @@ Future<void> _removeDoc(
   }
 }
 
-Future<void> _moveDoc(
+Future<void> _renameFolder(
   BuildContext context,
   WidgetRef ref,
-  LibraryDocument doc,
+  LibraryFolder folder,
 ) async {
-  final choice = await _pickFolder(context, ref, currentFolderId: doc.folderId);
-  if (choice == null || !context.mounted) return; // cancelled or gone
+  final name = await _promptName(
+    context,
+    title: 'Rename folder',
+    label: 'Folder name',
+    initial: folder.name,
+  );
+  if (name != null && name.trim().isNotEmpty && context.mounted) {
+    ref
+        .read(libraryControllerProvider.notifier)
+        .renameFolder(folder, name.trim());
+  }
+}
+
+/// Confirm-and-delete a folder. Returns true if it was deleted.
+Future<bool> _deleteFolder(
+  BuildContext context,
+  WidgetRef ref,
+  LibraryFolder folder,
+) async {
+  final count = ref.read(libraryControllerProvider).countIn(folder.id);
+  final ok = await _confirm(
+    context,
+    title: 'Delete folder?',
+    message: count == 0
+        ? '“${folder.name}” will be deleted.'
+        : '“${folder.name}” will be deleted. Its $count item(s) move up to the '
+              'parent (documents and subfolders are kept).',
+    confirmLabel: 'Delete',
+  );
+  if (ok && context.mounted) {
+    ref.read(libraryControllerProvider.notifier).deleteFolder(folder);
+    return true;
+  }
+  return false;
+}
+
+/// Move [item] via a folder picker (the menu alternative to drag-and-drop).
+Future<void> _moveItem(
+  BuildContext context,
+  WidgetRef ref,
+  LibraryItem item,
+) async {
+  final choice = await _pickFolder(context, ref, item: item);
+  if (choice == null || !context.mounted) return;
   ref
       .read(libraryControllerProvider.notifier)
-      .moveToFolder(doc, choice.folderId);
+      .moveItemTo(item: item, targetParentId: choice.folderId);
+}
+
+Future<void> _createFolderAt(
+  BuildContext context,
+  WidgetRef ref,
+  int? parentId,
+) async {
+  final name = await _promptName(
+    context,
+    title: 'New folder',
+    label: 'Folder name',
+  );
+  if (name != null && name.trim().isNotEmpty && context.mounted) {
+    await ref
+        .read(libraryControllerProvider.notifier)
+        .createFolder(name.trim(), parentId: parentId);
+  }
 }
 
 /// Open a file picker and import one PDF into [folderId] (root when null).
@@ -112,7 +177,6 @@ class LibraryScreen extends ConsumerStatefulWidget {
 class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   bool _importing = false;
   bool _dragging = false;
-  final Set<int> _expanded = {};
 
   Future<void> _onDrop(List<DropItem> items) async {
     setState(() => _dragging = false);
@@ -162,104 +226,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     if (doc != null && mounted) await _openDoc(context, ref, doc);
   }
 
-  Future<void> _newFolder() async {
-    final name = await _promptName(
-      context,
-      title: 'New folder',
-      label: 'Folder name',
-    );
-    if (name != null && name.trim().isNotEmpty) {
-      final folder = await ref
-          .read(libraryControllerProvider.notifier)
-          .createFolder(name.trim());
-      if (mounted) setState(() => _expanded.add(folder.id));
-    }
-  }
-
-  Future<void> _renameFolder(LibraryFolder folder) async {
-    final name = await _promptName(
-      context,
-      title: 'Rename folder',
-      label: 'Folder name',
-      initial: folder.name,
-    );
-    if (name != null && name.trim().isNotEmpty) {
-      ref
-          .read(libraryControllerProvider.notifier)
-          .renameFolder(folder, name.trim());
-    }
-  }
-
-  Future<void> _deleteFolder(LibraryFolder folder, int count) async {
-    final ok = await _confirm(
-      context,
-      title: 'Delete folder?',
-      message: count == 0
-          ? '“${folder.name}” will be deleted.'
-          : '“${folder.name}” will be deleted. Its $count document(s) move back '
-                'to the library (the files are kept).',
-      confirmLabel: 'Delete',
-    );
-    if (ok) ref.read(libraryControllerProvider.notifier).deleteFolder(folder);
-  }
-
-  void _openFolder(LibraryFolder folder) {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => FolderScreen(folderId: folder.id)),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(libraryControllerProvider);
-    final folders = state.folders;
-    final rootDocs = state.rootDocuments;
-    final isEmpty = folders.isEmpty && state.documents.isEmpty;
-
-    final children = <Widget>[];
-    for (final folder in folders) {
-      final count = state.countIn(folder.id);
-      final expanded = _expanded.contains(folder.id);
-      children.add(
-        _FolderTile(
-          folder: folder,
-          count: count,
-          expanded: expanded,
-          onToggle: () => setState(
-            () => expanded
-                ? _expanded.remove(folder.id)
-                : _expanded.add(folder.id),
-          ),
-          onOpen: () => _openFolder(folder),
-          onRename: () => _renameFolder(folder),
-          onDelete: () => _deleteFolder(folder, count),
-        ),
-      );
-      if (expanded) {
-        final docs = state.documentsIn(folder.id);
-        if (docs.isEmpty) {
-          children.add(const _IndentedHint('No documents in this folder yet.'));
-        } else {
-          for (final doc in docs) {
-            children.add(
-              Padding(
-                padding: const EdgeInsets.only(left: 24),
-                child: _DocumentTile(doc: doc),
-              ),
-            );
-          }
-        }
-      }
-    }
-
-    if (rootDocs.isNotEmpty) {
-      if (folders.isNotEmpty) {
-        children.add(const _SectionLabel('Ungrouped'));
-      }
-      for (final doc in rootDocs) {
-        children.add(_DocumentTile(doc: doc));
-      }
-    }
+    final hasItems = state.countIn(null) > 0;
 
     return Scaffold(
       appBar: AppBar(
@@ -268,7 +238,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
           IconButton(
             tooltip: 'New folder',
             icon: const Icon(Icons.create_new_folder_outlined),
-            onPressed: _newFolder,
+            onPressed: () => _createFolderAt(context, ref, null),
           ),
         ],
         bottom: _importing
@@ -291,12 +261,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         child: Stack(
           children: [
             Positioned.fill(
-              child: isEmpty
-                  ? _EmptyLibrary(onImport: _importing ? null : _import)
-                  : ListView(
-                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 88),
-                      children: children,
-                    ),
+              child: hasItems
+                  ? const _LibraryLevel(parentId: null)
+                  : _EmptyLibrary(onImport: _importing ? null : _import),
             ),
             if (_dragging) const _DropOverlay(),
           ],
@@ -307,7 +274,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
 }
 
 // ---------------------------------------------------------------------------
-// Folder detail screen (navigate into a folder)
+// Folder detail screen (navigate into a folder; supports unlimited nesting)
 // ---------------------------------------------------------------------------
 
 class FolderScreen extends ConsumerStatefulWidget {
@@ -322,13 +289,6 @@ class FolderScreen extends ConsumerStatefulWidget {
 class _FolderScreenState extends ConsumerState<FolderScreen> {
   bool _importing = false;
   bool _dragging = false;
-
-  LibraryFolder? _folderFrom(LibraryState state) {
-    for (final f in state.folders) {
-      if (f.id == widget.folderId) return f;
-    }
-    return null;
-  }
 
   Future<void> _import() async {
     if (_importing) return;
@@ -355,62 +315,39 @@ class _FolderScreenState extends ConsumerState<FolderScreen> {
     }
   }
 
-  Future<void> _rename(LibraryFolder folder) async {
-    final name = await _promptName(
-      context,
-      title: 'Rename folder',
-      label: 'Folder name',
-      initial: folder.name,
-    );
-    if (name != null && name.trim().isNotEmpty) {
-      ref
-          .read(libraryControllerProvider.notifier)
-          .renameFolder(folder, name.trim());
-    }
-  }
-
-  Future<void> _delete(LibraryFolder folder, int count) async {
-    final ok = await _confirm(
-      context,
-      title: 'Delete folder?',
-      message: count == 0
-          ? '“${folder.name}” will be deleted.'
-          : '“${folder.name}” will be deleted. Its $count document(s) move back '
-                'to the library (the files are kept).',
-      confirmLabel: 'Delete',
-    );
-    if (ok) {
-      ref.read(libraryControllerProvider.notifier).deleteFolder(folder);
-      if (mounted) Navigator.of(context).pop();
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(libraryControllerProvider);
-    final folder = _folderFrom(state);
+    final folder = state.folderById(widget.folderId);
     if (folder == null) {
-      // Folder was deleted while open.
       return Scaffold(
         appBar: AppBar(title: const Text('Folder')),
         body: const Center(child: Text('This folder no longer exists.')),
       );
     }
-    final docs = state.documentsIn(folder.id);
+    final hasItems = state.countIn(folder.id) > 0;
 
     return Scaffold(
       appBar: AppBar(
         title: Text(folder.name, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
           IconButton(
+            tooltip: 'New folder',
+            icon: const Icon(Icons.create_new_folder_outlined),
+            onPressed: () => _createFolderAt(context, ref, folder.id),
+          ),
+          IconButton(
             tooltip: 'Rename folder',
             icon: const Icon(Icons.drive_file_rename_outline),
-            onPressed: () => _rename(folder),
+            onPressed: () => _renameFolder(context, ref, folder),
           ),
           IconButton(
             tooltip: 'Delete folder',
             icon: const Icon(Icons.delete_outline),
-            onPressed: () => _delete(folder, docs.length),
+            onPressed: () async {
+              final deleted = await _deleteFolder(context, ref, folder);
+              if (deleted && context.mounted) Navigator.of(context).pop();
+            },
           ),
         ],
         bottom: _importing
@@ -433,22 +370,17 @@ class _FolderScreenState extends ConsumerState<FolderScreen> {
         child: Stack(
           children: [
             Positioned.fill(
-              child: docs.isEmpty
-                  ? const Center(
+              child: hasItems
+                  ? _LibraryLevel(parentId: folder.id)
+                  : const Center(
                       child: Padding(
                         padding: EdgeInsets.all(32),
                         child: Text(
-                          'This folder is empty.\nImport a PDF, or move documents '
-                          'here with “Move to folder…”.',
+                          'This folder is empty.\nImport a PDF, drag items in, or '
+                          'use “Move to folder…”.',
                           textAlign: TextAlign.center,
                         ),
                       ),
-                    )
-                  : ListView(
-                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 88),
-                      children: [
-                        for (final doc in docs) _DocumentTile(doc: doc),
-                      ],
                     ),
             ),
             if (_dragging) const _DropOverlay(),
@@ -460,121 +392,261 @@ class _FolderScreenState extends ConsumerState<FolderScreen> {
 }
 
 // ---------------------------------------------------------------------------
-// Folder row (root view): expand via the triangle, open via double-click.
+// One level of the library: an ordered, drag-and-drop list of items.
 // ---------------------------------------------------------------------------
 
-class _FolderTile extends StatelessWidget {
-  const _FolderTile({
-    required this.folder,
-    required this.count,
-    required this.expanded,
-    required this.onToggle,
-    required this.onOpen,
-    required this.onRename,
-    required this.onDelete,
-  });
+class _LibraryLevel extends ConsumerWidget {
+  const _LibraryLevel({required this.parentId});
 
-  final LibraryFolder folder;
-  final int count;
-  final bool expanded;
-  final VoidCallback onToggle;
-  final VoidCallback onOpen;
-  final VoidCallback onRename;
-  final VoidCallback onDelete;
+  final int? parentId;
 
   @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      color: scheme.surfaceContainerHighest,
-      // ListTile.onTap handles the single-tap toggle (and correctly lets the
-      // leading/trailing buttons receive their own taps); the GestureDetector
-      // only adds double-tap-to-open on top.
-      child: GestureDetector(
-        onDoubleTap: onOpen,
-        child: ListTile(
-          onTap: onToggle,
-          leading: IconButton(
-            tooltip: expanded ? 'Collapse' : 'Expand',
-            icon: Icon(expanded ? Icons.expand_more : Icons.chevron_right),
-            onPressed: onToggle,
-          ),
-          title: Row(
-            children: [
-              Icon(Icons.folder, color: scheme.primary),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  folder.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ),
-            ],
-          ),
-          subtitle: Text('$count document${count == 1 ? '' : 's'}'),
-          trailing: PopupMenuButton<String>(
-            tooltip: 'Folder actions',
-            onSelected: (v) {
-              switch (v) {
-                case 'open':
-                  onOpen();
-                case 'rename':
-                  onRename();
-                case 'delete':
-                  onDelete();
-              }
-            },
-            itemBuilder: (context) => const [
-              PopupMenuItem(value: 'open', child: Text('Open')),
-              PopupMenuItem(value: 'rename', child: Text('Rename')),
-              PopupMenuItem(value: 'delete', child: Text('Delete')),
-            ],
-          ),
-        ),
-      ),
+  Widget build(BuildContext context, WidgetRef ref) {
+    final items = ref.watch(libraryControllerProvider).itemsIn(parentId);
+    final children = <Widget>[_DropGap(parentId: parentId, index: 0)];
+    for (var i = 0; i < items.length; i++) {
+      children.add(_ItemRow(key: ValueKey(items[i].key), item: items[i]));
+      children.add(_DropGap(parentId: parentId, index: i + 1));
+    }
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 88),
+      children: children,
     );
   }
 }
 
-class _DocumentTile extends ConsumerWidget {
-  const _DocumentTile({required this.doc});
+/// A thin reorder drop zone between rows; shows an insertion line while a
+/// dragged item hovers over it.
+class _DropGap extends ConsumerWidget {
+  const _DropGap({required this.parentId, required this.index});
 
-  final LibraryDocument doc;
+  final int? parentId;
+  final int index;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final subtitle = <String>[
-      if (doc.pageCount > 0) '${doc.pageCount} pages',
-      if (doc.lastOpenedAt != null)
-        'opened ${DateFormat.yMMMd().add_jm().format(doc.lastOpenedAt!)}',
-    ].join(' · ');
+    return DragTarget<LibraryItem>(
+      onWillAcceptWithDetails: (_) => true,
+      onAcceptWithDetails: (d) => ref
+          .read(libraryControllerProvider.notifier)
+          .moveItemTo(item: d.data, targetParentId: parentId, gapIndex: index),
+      builder: (context, candidate, rejected) {
+        final active = candidate.isNotEmpty;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          height: active ? 28 : 14,
+          alignment: Alignment.center,
+          // A transparent fill keeps the gap hit-testable so the DragTarget
+          // actually receives items dropped here (an empty box would not).
+          color: Colors.transparent,
+          child: active
+              ? Container(
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primary,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                )
+              : null,
+        );
+      },
+    );
+  }
+}
+
+/// A folder or document row: draggable by its handle, tappable to open, and (for
+/// folders) a drop target that accepts items dropped onto it (move into).
+class _ItemRow extends ConsumerWidget {
+  const _ItemRow({super.key, required this.item});
+
+  final LibraryItem item;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (!item.isFolder) return _rowCard(context, ref, active: false);
+    return DragTarget<LibraryItem>(
+      onWillAcceptWithDetails: (d) =>
+          d.data.key != item.key &&
+          ref
+              .read(libraryControllerProvider.notifier)
+              .canMoveInto(d.data, item.folder!.id),
+      onAcceptWithDetails: (d) => ref
+          .read(libraryControllerProvider.notifier)
+          .moveItemTo(item: d.data, targetParentId: item.folder!.id),
+      builder: (context, candidate, rejected) =>
+          _rowCard(context, ref, active: candidate.isNotEmpty),
+    );
+  }
+
+  Widget _rowCard(BuildContext context, WidgetRef ref, {required bool active}) {
+    final theme = Theme.of(context);
+    final isFolder = item.isFolder;
+    final title = isFolder ? item.folder!.name : item.document!.title;
+
+    final leading = isFolder
+        ? Icon(Icons.folder, color: theme.colorScheme.primary)
+        : const Icon(Icons.picture_as_pdf_outlined);
+
+    final String? subtitle;
+    if (isFolder) {
+      final count = ref
+          .watch(libraryControllerProvider)
+          .countIn(item.folder!.id);
+      subtitle = '$count item${count == 1 ? '' : 's'}';
+    } else {
+      final doc = item.document!;
+      final parts = <String>[
+        if (doc.pageCount > 0) '${doc.pageCount} pages',
+        if (doc.lastOpenedAt != null)
+          'opened ${DateFormat.yMMMd().add_jm().format(doc.lastOpenedAt!)}',
+      ];
+      subtitle = parts.isEmpty ? null : parts.join(' · ');
+    }
+
     return Card(
       clipBehavior: Clip.antiAlias,
-      child: ListTile(
-        leading: const CircleAvatar(child: Icon(Icons.picture_as_pdf_outlined)),
-        title: Text(doc.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: subtitle.isEmpty
-            ? null
-            : Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
-        onTap: () => _openDoc(context, ref, doc),
-        trailing: PopupMenuButton<String>(
-          onSelected: (v) {
-            switch (v) {
-              case 'move':
-                _moveDoc(context, ref, doc);
-              case 'rename':
-                _renameDoc(context, ref, doc);
-              case 'remove':
-                _removeDoc(context, ref, doc);
-            }
-          },
-          itemBuilder: (context) => const [
-            PopupMenuItem(value: 'move', child: Text('Move to folder…')),
-            PopupMenuItem(value: 'rename', child: Text('Rename')),
-            PopupMenuItem(value: 'remove', child: Text('Remove')),
+      color: active
+          ? theme.colorScheme.primaryContainer
+          : (isFolder ? theme.colorScheme.surfaceContainerHighest : null),
+      shape: active
+          ? RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: theme.colorScheme.primary, width: 2),
+            )
+          : null,
+      child: Row(
+        children: [
+          // Drag handle — the only place a drag starts, so taps/scrolls are
+          // unaffected.
+          Draggable<LibraryItem>(
+            data: item,
+            dragAnchorStrategy: pointerDragAnchorStrategy,
+            feedback: _DragFeedback(icon: leading, title: title),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 16),
+              child: Icon(Icons.drag_indicator),
+            ),
+          ),
+          Expanded(
+            child: InkWell(
+              onTap: () => isFolder
+                  ? _openFolder(context, item.folder!)
+                  : _openDoc(context, ref, item.document!),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  children: [
+                    leading,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: isFolder
+                                ? const TextStyle(fontWeight: FontWeight.w600)
+                                : null,
+                          ),
+                          if (subtitle != null)
+                            Text(
+                              subtitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.outline,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          _itemMenu(context, ref),
+        ],
+      ),
+    );
+  }
+
+  Widget _itemMenu(BuildContext context, WidgetRef ref) {
+    if (item.isFolder) {
+      final folder = item.folder!;
+      return PopupMenuButton<String>(
+        tooltip: 'Folder actions',
+        onSelected: (v) {
+          switch (v) {
+            case 'open':
+              _openFolder(context, folder);
+            case 'move':
+              _moveItem(context, ref, item);
+            case 'rename':
+              _renameFolder(context, ref, folder);
+            case 'delete':
+              _deleteFolder(context, ref, folder);
+          }
+        },
+        itemBuilder: (context) => const [
+          PopupMenuItem(value: 'open', child: Text('Open')),
+          PopupMenuItem(value: 'move', child: Text('Move to folder…')),
+          PopupMenuItem(value: 'rename', child: Text('Rename')),
+          PopupMenuItem(value: 'delete', child: Text('Delete')),
+        ],
+      );
+    }
+    final doc = item.document!;
+    return PopupMenuButton<String>(
+      onSelected: (v) {
+        switch (v) {
+          case 'move':
+            _moveItem(context, ref, item);
+          case 'rename':
+            _renameDoc(context, ref, doc);
+          case 'remove':
+            _removeDoc(context, ref, doc);
+        }
+      },
+      itemBuilder: (context) => const [
+        PopupMenuItem(value: 'move', child: Text('Move to folder…')),
+        PopupMenuItem(value: 'rename', child: Text('Rename')),
+        PopupMenuItem(value: 'remove', child: Text('Remove')),
+      ],
+    );
+  }
+}
+
+class _DragFeedback extends StatelessWidget {
+  const _DragFeedback({required this.icon, required this.title});
+
+  final Widget icon;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      elevation: 8,
+      borderRadius: BorderRadius.circular(10),
+      color: theme.colorScheme.surfaceContainerHighest,
+      child: Container(
+        width: 280,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            icon,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
           ],
         ),
       ),
@@ -582,43 +654,9 @@ class _DocumentTile extends ConsumerWidget {
   }
 }
 
-class _SectionLabel extends StatelessWidget {
-  const _SectionLabel(this.text);
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 16, 8, 4),
-      child: Text(
-        text,
-        style: theme.textTheme.labelLarge?.copyWith(
-          color: theme.colorScheme.outline,
-        ),
-      ),
-    );
-  }
-}
-
-class _IndentedHint extends StatelessWidget {
-  const _IndentedHint(this.text);
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(40, 4, 12, 8),
-      child: Text(
-        text,
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: theme.colorScheme.outline,
-        ),
-      ),
-    );
-  }
-}
+// ---------------------------------------------------------------------------
+// Misc widgets
+// ---------------------------------------------------------------------------
 
 class _DropOverlay extends StatelessWidget {
   const _DropOverlay();
@@ -686,7 +724,8 @@ class _EmptyLibrary extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               'Import a PDF — or drag one in from your file manager — to start '
-              'reading. Use the folder button to group documents.',
+              'reading. Use the folder button to group documents; drag items by '
+              'the handle to reorder them or drop them onto a folder.',
               textAlign: TextAlign.center,
               style: theme.textTheme.bodyMedium,
             ),
@@ -713,56 +752,58 @@ class _FolderChoice {
   final int? folderId;
 }
 
+/// Pick a destination folder for [item], excluding invalid targets (a folder
+/// can't move into itself or one of its descendants).
 Future<_FolderChoice?> _pickFolder(
   BuildContext context,
   WidgetRef ref, {
-  required int? currentFolderId,
+  required LibraryItem item,
 }) {
+  final notifier = ref.read(libraryControllerProvider.notifier);
   final state = ref.read(libraryControllerProvider);
+  // Folders shown with an indented path so nesting is legible.
+  String pathOf(LibraryFolder f) {
+    final parts = <String>[f.name];
+    var cur = f.parentId == null ? null : state.folderById(f.parentId!);
+    var guard = 0;
+    while (cur != null && guard++ < 64) {
+      parts.insert(0, cur.name);
+      cur = cur.parentId == null ? null : state.folderById(cur.parentId!);
+    }
+    return parts.join(' / ');
+  }
+
+  final targets =
+      state.folders.where((f) => notifier.canMoveInto(item, f.id)).toList()
+        ..sort(
+          (a, b) => pathOf(a).toLowerCase().compareTo(pathOf(b).toLowerCase()),
+        );
+
   return showDialog<_FolderChoice>(
     context: context,
     builder: (dialogContext) {
-      Widget option(int? id, String label, IconData icon) {
-        final selected = id == currentFolderId;
-        return ListTile(
-          leading: Icon(icon),
-          title: Text(label),
-          trailing: selected ? const Icon(Icons.check) : null,
-          onTap: () => Navigator.of(dialogContext).pop(_FolderChoice(id)),
-        );
-      }
-
       return AlertDialog(
         title: const Text('Move to folder'),
         contentPadding: const EdgeInsets.symmetric(vertical: 12),
         content: SizedBox(
-          width: 360,
+          width: 380,
           child: ListView(
             shrinkWrap: true,
             children: [
-              option(null, 'Library (no folder)', Icons.home_outlined),
-              const Divider(height: 1),
-              for (final f in state.folders)
-                option(f.id, f.name, Icons.folder_outlined),
-              const Divider(height: 1),
               ListTile(
-                leading: const Icon(Icons.create_new_folder_outlined),
-                title: const Text('New folder…'),
-                onTap: () async {
-                  final name = await _promptName(
-                    dialogContext,
-                    title: 'New folder',
-                    label: 'Folder name',
-                  );
-                  if (name == null || name.trim().isEmpty) return;
-                  final folder = await ref
-                      .read(libraryControllerProvider.notifier)
-                      .createFolder(name.trim());
-                  if (dialogContext.mounted) {
-                    Navigator.of(dialogContext).pop(_FolderChoice(folder.id));
-                  }
-                },
+                leading: const Icon(Icons.home_outlined),
+                title: const Text('Library (no folder)'),
+                onTap: () =>
+                    Navigator.of(dialogContext).pop(const _FolderChoice(null)),
               ),
+              const Divider(height: 1),
+              for (final f in targets)
+                ListTile(
+                  leading: const Icon(Icons.folder_outlined),
+                  title: Text(pathOf(f)),
+                  onTap: () =>
+                      Navigator.of(dialogContext).pop(_FolderChoice(f.id)),
+                ),
             ],
           ),
         ),

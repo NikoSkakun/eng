@@ -74,6 +74,8 @@ class BackupService {
             'id': f.id,
             'name': f.name,
             'createdAt': f.createdAt.millisecondsSinceEpoch,
+            'parentId': f.parentId,
+            'position': f.position,
           },
       ];
       final docs = _library.getAll();
@@ -92,6 +94,7 @@ class BackupService {
           'addedAt': d.addedAt.millisecondsSinceEpoch,
           'lastOpenedAt': d.lastOpenedAt?.millisecondsSinceEpoch,
           'folderId': d.folderId,
+          'position': d.position,
           'file': archiveName,
         });
         docCount++;
@@ -177,21 +180,38 @@ class BackupService {
     final folderIdMap = <int, int>{}; // original folder id -> new folder id
 
     if (includeLibrary && manifest['folders'] is List) {
-      for (final raw in manifest['folders'] as List) {
+      final foldersRaw = manifest['folders'] as List;
+      // First pass: create every folder (parent set in a second pass once all
+      // new ids are known). Keep even an oddly-empty name so documents that
+      // reference it don't silently lose their folder.
+      for (final raw in foldersRaw) {
         if (raw is! Map) continue;
         final m = raw.cast<String, Object?>();
         final name = (m['name'] as String?)?.trim();
-        // Keep every folder (even an oddly-empty name) so documents that
-        // reference it don't silently lose their folder on import.
         final saved = _library.insertFolder(
           LibraryFolder(
             id: 0,
             name: (name == null || name.isEmpty) ? 'Untitled folder' : name,
             createdAt: _date(m['createdAt']) ?? DateTime.now(),
+            position: (m['position'] as num?)?.toInt() ?? 0,
           ),
         );
         final oldId = (m['id'] as num?)?.toInt();
         if (oldId != null) folderIdMap[oldId] = saved.id;
+      }
+      // Second pass: re-link parents through the id map (an unknown parent
+      // falls back to the root).
+      for (final raw in foldersRaw) {
+        if (raw is! Map) continue;
+        final m = raw.cast<String, Object?>();
+        final oldParent = (m['parentId'] as num?)?.toInt();
+        final oldId = (m['id'] as num?)?.toInt();
+        if (oldParent == null || oldId == null) continue;
+        final newId = folderIdMap[oldId];
+        final newParent = folderIdMap[oldParent];
+        if (newId != null && newParent != null) {
+          _library.setFolderParent(newId, newParent);
+        }
       }
     }
 
@@ -227,6 +247,7 @@ class BackupService {
             addedAt: _date(m['addedAt']) ?? DateTime.now(),
             lastOpenedAt: _date(m['lastOpenedAt']),
             folderId: oldFolderId == null ? null : folderIdMap[oldFolderId],
+            position: (m['position'] as num?)?.toInt() ?? 0,
           ),
         );
         final oldId = (m['id'] as num?)?.toInt();

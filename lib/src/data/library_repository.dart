@@ -14,17 +14,21 @@ class LibraryRepository {
   // --- Folders ---
 
   List<LibraryFolder> getAllFolders() {
-    final rows = _db.select(
-      'SELECT * FROM folders ORDER BY name COLLATE NOCASE;',
-    );
+    final rows = _db.select('SELECT * FROM folders;');
     return rows.map(_folderFromRow).toList();
   }
 
   LibraryFolder insertFolder(LibraryFolder folder) {
-    _db.execute('INSERT INTO folders(name, created_at) VALUES(?,?);', [
-      folder.name,
-      folder.createdAt.millisecondsSinceEpoch,
-    ]);
+    _db.execute(
+      'INSERT INTO folders(name, created_at, parent_id, position) '
+      'VALUES(?,?,?,?);',
+      [
+        folder.name,
+        folder.createdAt.millisecondsSinceEpoch,
+        folder.parentId,
+        folder.position,
+      ],
+    );
     return folder.copyWith(id: _db.lastInsertRowId);
   }
 
@@ -32,18 +36,62 @@ class LibraryRepository {
     _db.execute('UPDATE folders SET name = ? WHERE id = ?;', [name, id]);
   }
 
-  /// Delete a folder; its documents are kept and moved back to the root.
-  void deleteFolder(int id) {
-    _db.execute('UPDATE documents SET folder_id = NULL WHERE folder_id = ?;', [
+  /// Delete a folder, moving its child folders and documents up to
+  /// [newParentId] (the deleted folder's own parent) so nothing is lost.
+  void deleteFolder(int id, {int? newParentId}) {
+    _db.execute('UPDATE folders SET parent_id = ? WHERE parent_id = ?;', [
+      newParentId,
+      id,
+    ]);
+    _db.execute('UPDATE documents SET folder_id = ? WHERE folder_id = ?;', [
+      newParentId,
       id,
     ]);
     _db.execute('DELETE FROM folders WHERE id = ?;', [id]);
   }
 
-  /// Move a document into [folderId] (or to the root when null).
-  void setDocumentFolder(int docId, int? folderId) {
-    _db.execute('UPDATE documents SET folder_id = ? WHERE id = ?;', [
+  /// Move a document into [folderId] (or to the root when null), optionally
+  /// setting its [position].
+  void setDocumentFolder(int docId, int? folderId, {int? position}) {
+    if (position == null) {
+      _db.execute('UPDATE documents SET folder_id = ? WHERE id = ?;', [
+        folderId,
+        docId,
+      ]);
+    } else {
+      _db.execute(
+        'UPDATE documents SET folder_id = ?, position = ? WHERE id = ?;',
+        [folderId, position, docId],
+      );
+    }
+  }
+
+  /// Move a folder under [parentId] (or to the root when null), optionally
+  /// setting its [position].
+  void setFolderParent(int folderId, int? parentId, {int? position}) {
+    if (position == null) {
+      _db.execute('UPDATE folders SET parent_id = ? WHERE id = ?;', [
+        parentId,
+        folderId,
+      ]);
+    } else {
+      _db.execute(
+        'UPDATE folders SET parent_id = ?, position = ? WHERE id = ?;',
+        [parentId, position, folderId],
+      );
+    }
+  }
+
+  void setFolderPosition(int folderId, int position) {
+    _db.execute('UPDATE folders SET position = ? WHERE id = ?;', [
+      position,
       folderId,
+    ]);
+  }
+
+  void setDocumentPosition(int docId, int position) {
+    _db.execute('UPDATE documents SET position = ? WHERE id = ?;', [
+      position,
       docId,
     ]);
   }
@@ -52,6 +100,8 @@ class LibraryRepository {
     id: row['id'] as int,
     name: row['name'] as String,
     createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
+    parentId: row['parent_id'] as int?,
+    position: (row['position'] as int?) ?? 0,
   );
 
   // --- Documents ---
@@ -74,8 +124,8 @@ class LibraryRepository {
   LibraryDocument insert(LibraryDocument doc) {
     _db.execute(
       '''
-      INSERT INTO documents(title, file_path, original_path, page_count, added_at, last_opened_at, last_page, view_matrix, folder_id)
-      VALUES(?,?,?,?,?,?,?,?,?);
+      INSERT INTO documents(title, file_path, original_path, page_count, added_at, last_opened_at, last_page, view_matrix, folder_id, position)
+      VALUES(?,?,?,?,?,?,?,?,?,?);
       ''',
       [
         doc.title,
@@ -87,6 +137,7 @@ class LibraryRepository {
         doc.lastPage,
         doc.viewMatrix,
         doc.folderId,
+        doc.position,
       ],
     );
     return doc.copyWith(id: _db.lastInsertRowId);
@@ -97,7 +148,8 @@ class LibraryRepository {
       '''
       UPDATE documents SET
         title = ?, file_path = ?, original_path = ?, page_count = ?,
-        last_opened_at = ?, last_page = ?, view_matrix = ?, folder_id = ?
+        last_opened_at = ?, last_page = ?, view_matrix = ?, folder_id = ?,
+        position = ?
       WHERE id = ?;
       ''',
       [
@@ -109,6 +161,7 @@ class LibraryRepository {
         doc.lastPage,
         doc.viewMatrix,
         doc.folderId,
+        doc.position,
         doc.id,
       ],
     );
@@ -133,6 +186,7 @@ class LibraryRepository {
       lastPage: row['last_page'] as int,
       viewMatrix: row['view_matrix'] as String?,
       folderId: row['folder_id'] as int?,
+      position: (row['position'] as int?) ?? 0,
     );
   }
 }

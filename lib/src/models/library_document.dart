@@ -15,6 +15,7 @@ class LibraryDocument {
     this.lastPage = 1,
     this.viewMatrix,
     this.folderId,
+    this.position = 0,
   });
 
   final int id;
@@ -44,6 +45,9 @@ class LibraryDocument {
   /// Id of the folder this document belongs to, or null for the library root.
   final int? folderId;
 
+  /// Order of this document among the items of its folder (or the root).
+  final int position;
+
   LibraryDocument copyWith({
     int? id,
     String? title,
@@ -55,6 +59,7 @@ class LibraryDocument {
     int? lastPage,
     Object? viewMatrix = _sentinel,
     Object? folderId = _sentinel,
+    int? position,
   }) {
     return LibraryDocument(
       id: id ?? this.id,
@@ -73,6 +78,7 @@ class LibraryDocument {
           ? this.viewMatrix
           : viewMatrix as String?,
       folderId: folderId == _sentinel ? this.folderId : folderId as int?,
+      position: position ?? this.position,
     );
   }
 

@@ -13,7 +13,7 @@ class AppDatabase {
   final Database db;
 
   /// Bump when the schema changes and add a branch in [_migrate].
-  static const int schemaVersion = 4;
+  static const int schemaVersion = 5;
 
   /// Open (creating if needed) the database at [path] and run migrations.
   factory AppDatabase.open(String path) {
@@ -40,7 +40,9 @@ class AppDatabase {
         CREATE TABLE folders(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           name TEXT NOT NULL,
-          created_at INTEGER NOT NULL
+          created_at INTEGER NOT NULL,
+          parent_id INTEGER REFERENCES folders(id) ON DELETE SET NULL,
+          position INTEGER NOT NULL DEFAULT 0
         );
       ''');
       db.execute('''
@@ -54,7 +56,8 @@ class AppDatabase {
           last_opened_at INTEGER,
           last_page INTEGER NOT NULL DEFAULT 1,
           view_matrix TEXT,
-          folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL
+          folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL,
+          position INTEGER NOT NULL DEFAULT 0
         );
       ''');
       db.execute('''
@@ -120,6 +123,20 @@ class AppDatabase {
         'REFERENCES folders(id) ON DELETE SET NULL;',
       );
       version = 4;
+    }
+    if (version == 4) {
+      // v4 -> v5: nested folders + manual ordering of library items.
+      db.execute(
+        'ALTER TABLE folders ADD COLUMN parent_id INTEGER '
+        'REFERENCES folders(id) ON DELETE SET NULL;',
+      );
+      db.execute(
+        'ALTER TABLE folders ADD COLUMN position INTEGER NOT NULL DEFAULT 0;',
+      );
+      db.execute(
+        'ALTER TABLE documents ADD COLUMN position INTEGER NOT NULL DEFAULT 0;',
+      );
+      version = 5;
     }
     db.userVersion = schemaVersion;
   }
