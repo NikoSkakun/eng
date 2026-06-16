@@ -83,6 +83,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   PdfViewerParams? _viewerParams;
   bool? _paramsHighlighting;
   bool _paramsHasSearcher = false;
+  double? _paramsScrollSensitivity;
   PdfTextSelectionParams? _textSelectionParams;
 
   // Cache of laid-out gloss text painters, keyed by text + every painter-
@@ -727,13 +728,16 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   void _ensureViewerParams() {
     final highlighting = _settings.highlightingEnabled;
     final hasSearcher = _searcher != null;
+    final scrollSensitivity = _settings.scrollSensitivity;
     if (_viewerParams != null &&
         _paramsHighlighting == highlighting &&
-        _paramsHasSearcher == hasSearcher) {
+        _paramsHasSearcher == hasSearcher &&
+        _paramsScrollSensitivity == scrollSensitivity) {
       return;
     }
     _paramsHighlighting = highlighting;
     _paramsHasSearcher = hasSearcher;
+    _paramsScrollSensitivity = scrollSensitivity;
     _textSelectionParams ??= PdfTextSelectionParams(
       enabled: true,
       onTextSelectionChange: _onSelectionChange,
@@ -747,6 +751,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       viewerOverlayBuilder: _buildViewerOverlay,
       pageOverlaysBuilder: highlighting ? _buildPageOverlays : null,
       pagePaintCallbacks: paintCallbacks.isEmpty ? null : paintCallbacks,
+      scrollByMouseWheel: scrollSensitivity,
       onGeneralTap: _onGeneralTap,
       onViewerReady: _onViewerReady,
       calculateInitialPageNumber: _calculateInitialPageNumber,

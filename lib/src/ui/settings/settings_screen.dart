@@ -384,6 +384,26 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ],
           const Divider(),
+          _SectionHeader('Reading'),
+          _settingLabel('Scroll speed'),
+          _settingSlider(
+            value: s.scrollSensitivity,
+            min: 0.1,
+            max: 1.5,
+            divisions: 28,
+            valueLabel: '${(s.scrollSensitivity * 100).round()}%',
+            onChanged: (v) => _mutate((x) => x.copyWith(scrollSensitivity: v)),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Text(
+              'How far the mouse wheel scrolls each notch. Higher is faster.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.outline,
+              ),
+            ),
+          ),
+          const Divider(),
           _SectionHeader('Translation provider'),
           ListTile(
             title: const Text('Provider'),

@@ -51,6 +51,11 @@ const int kDefaultInlineGlossBgColor = kNoColor;
 /// Default inline gloss font size as a fraction of the highlighted word height.
 const double kDefaultInlineGlossFontScale = 0.46;
 
+/// Default mouse-wheel scroll speed: a multiplier applied to the raw wheel
+/// delta. pdfrx's own default is 0.2; we bump it a little so scrolling feels
+/// snappier out of the box, and expose it as a setting for further tuning.
+const double kDefaultScrollSensitivity = 0.3;
+
 /// Horizontal alignment of the inline gloss relative to its highlighted word.
 enum GlossAlignment {
   left('left'),
@@ -88,6 +93,7 @@ class AppSettings {
     this.inlineGlossLetterSpacing = 0.0,
     this.inlineGlossVerticalOffset = 0.0,
     this.inlineGlossAlignment = GlossAlignment.left,
+    this.scrollSensitivity = kDefaultScrollSensitivity,
   });
 
   /// Language of the documents being read (and of definitions).
@@ -137,6 +143,10 @@ class AppSettings {
   /// Horizontal alignment of the gloss relative to its highlighted word.
   final GlossAlignment inlineGlossAlignment;
 
+  /// Mouse-wheel scroll speed: a multiplier on the raw wheel delta. Higher
+  /// scrolls farther per notch; pdfrx's untouched default is 0.2.
+  final double scrollSensitivity;
+
   /// Whether definitions can be looked up given the current learning language.
   bool get definitionsAvailable =>
       definitionProvider != DefinitionProviderId.none &&
@@ -161,6 +171,7 @@ class AppSettings {
     double? inlineGlossLetterSpacing,
     double? inlineGlossVerticalOffset,
     GlossAlignment? inlineGlossAlignment,
+    double? scrollSensitivity,
   }) {
     return AppSettings(
       learningLang: learningLang ?? this.learningLang,
@@ -184,6 +195,7 @@ class AppSettings {
       inlineGlossVerticalOffset:
           inlineGlossVerticalOffset ?? this.inlineGlossVerticalOffset,
       inlineGlossAlignment: inlineGlossAlignment ?? this.inlineGlossAlignment,
+      scrollSensitivity: scrollSensitivity ?? this.scrollSensitivity,
     );
   }
 }
@@ -212,6 +224,7 @@ class SettingsStore {
   static const _kInlineGlossLetterSpacing = 'inlineGlossLetterSpacing';
   static const _kInlineGlossVerticalOffset = 'inlineGlossVerticalOffset';
   static const _kInlineGlossAlignment = 'inlineGlossAlignment';
+  static const _kScrollSensitivity = 'scrollSensitivity';
 
   AppSettings load() {
     return AppSettings(
@@ -245,6 +258,8 @@ class SettingsStore {
       inlineGlossAlignment: GlossAlignment.fromId(
         _prefs.getString(_kInlineGlossAlignment) ?? '',
       ),
+      scrollSensitivity:
+          _prefs.getDouble(_kScrollSensitivity) ?? kDefaultScrollSensitivity,
     );
   }
 
@@ -273,5 +288,6 @@ class SettingsStore {
       s.inlineGlossVerticalOffset,
     );
     await _prefs.setString(_kInlineGlossAlignment, s.inlineGlossAlignment.id);
+    await _prefs.setDouble(_kScrollSensitivity, s.scrollSensitivity);
   }
 }
