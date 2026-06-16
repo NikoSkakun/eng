@@ -194,7 +194,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   /// into continuous text (newlines -> spaces, hyphenated breaks repaired) per
   /// the [AppSettings.joinCopiedLines] setting. pdfrx's own copy writes the raw
   /// text verbatim, so we re-implement copy here and suppress its default.
-  Future<void> _copyTransformed() async {
+  Future<void> _copyTransformed({bool clearSelection = false}) async {
     if (!_controller.isReady) return;
     final delegate = _controller.textSelectionDelegate;
     if (!delegate.isCopyAllowed || !delegate.hasSelectedText) return;
@@ -203,7 +203,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     await Clipboard.setData(
       ClipboardData(text: TextNormalizer.joinWrappedLines(raw)),
     );
-    await delegate.clearTextSelection();
+    // Keep the selection after a keyboard copy (standard desktop behaviour);
+    // clear it only for the context-menu action, which also dismisses the menu.
+    if (clearSelection) await delegate.clearTextSelection();
   }
 
   /// pdfrx invokes this before its built-in key handling; returning non-null
@@ -233,7 +235,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     for (var i = 0; i < items.length; i++) {
       if (items[i].type == ContextMenuButtonType.copy) {
         items[i] = ContextMenuButtonItem(
-          onPressed: () => unawaited(_copyTransformed()),
+          onPressed: () => unawaited(_copyTransformed(clearSelection: true)),
           type: ContextMenuButtonType.copy,
         );
       }
