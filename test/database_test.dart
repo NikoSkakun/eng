@@ -60,6 +60,31 @@ void main() {
       expect(repo.getAll(), isEmpty);
     });
 
+    test('persists sub-word matching flag and parent word', () {
+      final repo = DictionaryRepository(db);
+      final now = DateTime.now();
+      final saved = repo.insert(
+        DictionaryEntry(
+          id: 0,
+          term: 'perturbation',
+          sourceLang: 'en',
+          targetLang: 'uk',
+          matchPartial: true,
+          sourceWord: 'perturbations',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      final got = repo.getById(saved.id)!;
+      expect(got.matchPartial, isTrue);
+      expect(got.sourceWord, 'perturbations');
+
+      repo.update(got.copyWith(matchPartial: false, sourceWord: null));
+      final updated = repo.getById(saved.id)!;
+      expect(updated.matchPartial, isFalse);
+      expect(updated.sourceWord, isNull);
+    });
+
     test('scoped lookup distinguishes global vs document entries', () {
       final repo = DictionaryRepository(db);
       final now = DateTime.now();

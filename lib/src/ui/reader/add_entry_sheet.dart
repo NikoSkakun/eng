@@ -6,6 +6,7 @@ import '../../services/translation/translation_models.dart';
 import '../../state/dictionary_controller.dart';
 import '../../state/settings_controller.dart';
 import '../../state/providers.dart';
+import '../../text/text_normalizer.dart';
 import '../../util/languages.dart';
 
 /// Bottom sheet for adding a new dictionary entry (from a selected word/phrase)
@@ -16,11 +17,16 @@ class AddEntrySheet extends ConsumerStatefulWidget {
     super.key,
     required this.documentId,
     this.initialTerm = '',
+    this.initialSourceWord,
     this.existing,
   });
 
   final int documentId;
   final String initialTerm;
+
+  /// The longer word [initialTerm] was selected from, when it was a partial
+  /// in-word selection. Defaults the new entry to sub-word matching.
+  final String? initialSourceWord;
   final DictionaryEntry? existing;
 
   /// Show the sheet; resolves to true if an entry was saved.
@@ -28,6 +34,7 @@ class AddEntrySheet extends ConsumerStatefulWidget {
     BuildContext context, {
     required int documentId,
     String initialTerm = '',
+    String? initialSourceWord,
     DictionaryEntry? existing,
   }) {
     return showModalBottomSheet<bool>(
@@ -41,6 +48,7 @@ class AddEntrySheet extends ConsumerStatefulWidget {
         child: AddEntrySheet(
           documentId: documentId,
           initialTerm: initialTerm,
+          initialSourceWord: initialSourceWord,
           existing: existing,
         ),
       ),
@@ -59,6 +67,8 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
 
   late bool _global;
   late bool _highlight;
+  late bool _matchPartial;
+  String? _sourceWord;
 
   bool _loadingSuggestion = false;
   bool _loadingDefinition = false;
@@ -77,6 +87,11 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
     _notes = TextEditingController(text: e?.notes ?? '');
     _global = e?.isGlobal ?? true;
     _highlight = e?.highlightEnabled ?? true;
+    _sourceWord = e?.sourceWord ?? widget.initialSourceWord;
+    _matchPartial = e?.matchPartial ?? (widget.initialSourceWord != null);
+    // Rebuild as the term is edited so the sub-word toggle tracks single-word vs
+    // multi-word terms.
+    _term.addListener(_onTermChanged);
 
     // Auto-suggest only for brand-new entries when enabled.
     if (e == null && _term.text.isNotEmpty) {
@@ -89,6 +104,7 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
 
   @override
   void dispose() {
+    _term.removeListener(_onTermChanged);
     _term.dispose();
     _translation.dispose();
     _definition.dispose();
@@ -96,9 +112,17 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
     super.dispose();
   }
 
+  void _onTermChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Whether the current term is a single word (sub-word matching only applies
+  /// to single words).
+  bool get _isSingleWord => TextNormalizer.tokenize(_term.text).length == 1;
+
   Future<void> _fetchSuggestion() async {
     final term = _term.text.trim();
-    if (term.isEmpty) return;
+    if (term.isEmpty || !mounted) return;
     setState(() {
       _loadingSuggestion = true;
       _suggestionError = null;
@@ -129,7 +153,7 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
 
   Future<void> _fetchDefinition() async {
     final term = _term.text.trim();
-    if (term.isEmpty) return;
+    if (term.isEmpty || !mounted) return;
     setState(() {
       _loadingDefinition = true;
       _definitionError = null;
@@ -190,6 +214,19 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
     String? orNull(TextEditingController c) =>
         c.text.trim().isEmpty ? null : c.text.trim();
     final scope = _global ? null : widget.documentId;
+    // Sub-word matching only applies to single-word terms; drop the remembered
+    // parent word if matching is off, the term is now multi-word, or the term
+    // was edited so it is no longer actually a part of that parent word.
+    final single = TextNormalizer.tokenize(term).length == 1;
+    final matchPartial = single && _matchPartial;
+    String? sourceWord;
+    if (matchPartial && _sourceWord != null && _sourceWord!.trim().isNotEmpty) {
+      final parent = TextNormalizer.normalizeToken(_sourceWord!.trim());
+      final word = TextNormalizer.normalizeToken(term);
+      if (parent != word && parent.contains(word)) {
+        sourceWord = _sourceWord!.trim();
+      }
+    }
 
     final base = widget.existing;
     final DictionaryEntry entry = base == null
@@ -202,6 +239,8 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
             definition: orNull(_definition),
             notes: orNull(_notes),
             highlightEnabled: _highlight,
+            matchPartial: matchPartial,
+            sourceWord: sourceWord,
             scopeDocumentId: scope,
             createdAt: now,
             updatedAt: now,
@@ -212,6 +251,8 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
             definition: orNull(_definition),
             notes: orNull(_notes),
             highlightEnabled: _highlight,
+            matchPartial: matchPartial,
+            sourceWord: sourceWord,
             scopeDocumentId: scope,
             updatedAt: now,
           );
@@ -352,6 +393,21 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
               onChanged: (v) => setState(() => _highlight = v),
               title: const Text('Highlight this term'),
             ),
+            if (_isSingleWord)
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _matchPartial,
+                onChanged: (v) => setState(() => _matchPartial = v),
+                title: const Text('Match inside longer words'),
+                subtitle: Text(
+                  _sourceWord != null && _sourceWord!.isNotEmpty
+                      ? 'Also highlights this inside longer words, '
+                            'e.g. “${_sourceWord!}”'
+                      : 'Also highlights this inside longer words '
+                            '(e.g. “perturbation” in “perturbations” or '
+                            '“small-perturbation”)',
+                ),
+              ),
             if (widget.documentId > 0)
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,

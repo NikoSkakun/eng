@@ -54,6 +54,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   Timer? _hideTimer;
 
   String? _selectedText;
+  // When the current selection is a strict part of a single longer word, this
+  // holds that parent word (e.g. selecting "perturbation" inside
+  // "perturbations") so a new entry can default to sub-word matching.
+  String? _selectedSourceWord;
   Timer? _selectionDebounce;
   Timer? _viewSaveDebounce;
 
@@ -75,10 +79,16 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     super.initState();
     // Persist the exact view (scroll + zoom) as the user pans/zooms.
     _controller.addListener(_onViewChanged);
+    // Handle Find/Escape at the hardware-keyboard level so the shortcut works
+    // regardless of which child (PDF viewer, nothing, …) currently has focus.
+    // A focus-scoped CallbackShortcuts only fires when a descendant is focused,
+    // which is why Ctrl+F was unreliable here.
+    HardwareKeyboard.instance.addHandler(_onKeyEvent);
   }
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKeyEvent);
     _controller.removeListener(_onViewChanged);
     _searcher?.removeListener(_onSearchChanged);
     _searcher?.dispose();
@@ -94,11 +104,32 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     if (mounted) setState(() {});
   }
 
+  /// Global key handler for Find (Ctrl/Cmd+F) and Escape. Returns true only
+  /// when it actually handles the event, so normal typing/scrolling is left
+  /// untouched. Inactive while a modal route (e.g. the add-entry sheet) is on
+  /// top of the reader.
+  bool _onKeyEvent(KeyEvent event) {
+    if (event is! KeyDownEvent || !mounted) return false;
+    if (!(ModalRoute.of(context)?.isCurrent ?? true)) return false;
+    final key = event.logicalKey;
+    final kb = HardwareKeyboard.instance;
+    if (key == LogicalKeyboardKey.keyF &&
+        (kb.isControlPressed || kb.isMetaPressed)) {
+      _openSearch();
+      return true;
+    }
+    if (key == LogicalKeyboardKey.escape && _searchVisible) {
+      _closeSearch();
+      return true;
+    }
+    return false;
+  }
+
   void _openSearch() {
     if (!_searchVisible) setState(() => _searchVisible = true);
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _searchFocus.requestFocus(),
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _searchFocus.requestFocus();
+    });
   }
 
   void _closeSearch() {
@@ -209,7 +240,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
     final defaultColor = Color(_settings.highlightColor);
     final showGloss = _settings.inlineTranslationEnabled;
-    final glossColor = Color(_settings.inlineGlossColor);
     final hits = <_HitRect>[];
     final widgets = <Widget>[];
 
@@ -254,7 +284,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           firstRect != null &&
           translation != null &&
           translation.isNotEmpty) {
-        widgets.add(_buildGloss(firstRect, translation, glossColor, pageRect));
+        widgets.add(_buildGloss(firstRect, translation, pageRect));
       }
     }
 
@@ -275,31 +305,77 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     return widgets;
   }
 
-  /// A small interlinear translation rendered just below [wordRect], sized to
-  /// fit between lines. Pointer-transparent so it doesn't affect hover/tap.
-  Widget _buildGloss(Rect wordRect, String text, Color color, Rect pageRect) {
-    final fontSize = (wordRect.height * 0.46).clamp(7.0, 80.0);
-    final maxWidth = (pageRect.width - wordRect.left).clamp(
-      8.0,
-      pageRect.width,
+  /// A small interlinear translation rendered near [wordRect], configurable via
+  /// the inline-gloss settings (color, background, size, spacing, vertical
+  /// offset and alignment). Pointer-transparent so it doesn't affect hover/tap.
+  Widget _buildGloss(Rect wordRect, String text, Rect pageRect) {
+    final s = _settings;
+    final fontSize = (wordRect.height * s.inlineGlossFontScale).clamp(
+      6.0,
+      96.0,
     );
+    final top = wordRect.bottom + s.inlineGlossVerticalOffset * wordRect.height;
+
+    // Anchor the gloss and shift it by a fraction of its own width so it aligns
+    // left / centered / right against the word without measuring the text.
+    // [maxWidth] bounds the gloss to the space available from the anchor in its
+    // grow direction so it can't run off a page edge.
+    final double anchorX;
+    final double translateX;
+    final double maxWidth;
+    switch (s.inlineGlossAlignment) {
+      case GlossAlignment.left:
+        anchorX = wordRect.left;
+        translateX = 0.0;
+        maxWidth = pageRect.width - wordRect.left;
+      case GlossAlignment.center:
+        anchorX = wordRect.center.dx;
+        translateX = -0.5;
+        final toLeft = wordRect.center.dx;
+        final toRight = pageRect.width - wordRect.center.dx;
+        maxWidth = (toLeft < toRight ? toLeft : toRight) * 2;
+      case GlossAlignment.right:
+        anchorX = wordRect.right;
+        translateX = -1.0;
+        maxWidth = wordRect.right;
+    }
+    final clampedMaxWidth = maxWidth.clamp(8.0, pageRect.width);
+
+    Widget label = Text(
+      text,
+      maxLines: 1,
+      softWrap: false,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        color: Color(s.inlineGlossColor),
+        fontSize: fontSize,
+        height: 1.0,
+        fontWeight: FontWeight.w500,
+        letterSpacing: s.inlineGlossLetterSpacing,
+      ),
+    );
+    if (!isNoColor(s.inlineGlossBgColor)) {
+      label = DecoratedBox(
+        decoration: BoxDecoration(
+          color: Color(s.inlineGlossBgColor),
+          borderRadius: BorderRadius.circular(2),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 1),
+          child: label,
+        ),
+      );
+    }
+
     return Positioned(
-      left: wordRect.left,
-      top: wordRect.bottom,
+      left: anchorX,
+      top: top,
       child: IgnorePointer(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: maxWidth),
-          child: Text(
-            text,
-            maxLines: 1,
-            softWrap: false,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: color,
-              fontSize: fontSize,
-              height: 1.0,
-              fontWeight: FontWeight.w500,
-            ),
+        child: FractionalTranslation(
+          translation: Offset(translateX, 0),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: clampedMaxWidth),
+            child: label,
           ),
         ),
       ),
@@ -350,7 +426,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   void _onSelectionChange(PdfTextSelection selection) {
     _selectionDebounce?.cancel();
     if (!selection.hasSelectedText) {
-      if (_selectedText != null) setState(() => _selectedText = null);
+      if (_selectedText != null) {
+        setState(() {
+          _selectedText = null;
+          _selectedSourceWord = null;
+        });
+      }
       return;
     }
     _selectionDebounce = Timer(const Duration(milliseconds: 300), () async {
@@ -361,8 +442,56 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       final text = TextNormalizer.trimEdgePunctuation(
         raw.replaceAll(RegExp(r'\s+'), ' ').trim(),
       );
-      setState(() => _selectedText = text.isEmpty ? null : text);
+      final parent = text.isEmpty
+          ? null
+          : await _detectParentWord(selection, text);
+      if (!mounted) return;
+      setState(() {
+        _selectedText = text.isEmpty ? null : text;
+        _selectedSourceWord = parent;
+      });
     });
+  }
+
+  /// If [text] is a single word selected from *inside* a longer word, return
+  /// that longer (parent) word; otherwise null. Used to default new entries to
+  /// sub-word matching and to remember where they came from.
+  Future<String?> _detectParentWord(
+    PdfTextSelection selection,
+    String text,
+  ) async {
+    if (text.contains(' ')) return null; // multi-word selection
+    try {
+      final ranges = await selection.getSelectedTextRanges();
+      if (ranges.length != 1) return null;
+      final r = ranges.first;
+      final full = r.pageText.fullText;
+      final selStart = r.start.clamp(0, full.length);
+      final selEnd = r.end.clamp(0, full.length);
+      if (selStart >= selEnd) return null;
+      // Find the single word token that fully encloses the selection. Using the
+      // tokenizer keeps offsets rune-aligned (no surrogate-half indexing) and
+      // means a comma/space captured by the selection lands outside any token,
+      // so it correctly reads as "not a sub-word selection".
+      for (final tok in TextNormalizer.tokenize(full)) {
+        if (tok.start > selStart) break; // tokens are ordered; gone past it
+        if (tok.end < selEnd) continue;
+        // tok.start <= selStart && tok.end >= selEnd: selection lies inside it.
+        if (tok.start == selStart && tok.end == selEnd) {
+          return null; // whole word selected, not a sub-part
+        }
+        final parent = tok.text;
+        if (parent.isEmpty ||
+            TextNormalizer.normalizeKey(parent) ==
+                TextNormalizer.normalizeKey(text)) {
+          return null;
+        }
+        return parent;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Find an entry for [text], preferring one scoped to this document and
@@ -381,9 +510,15 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       context,
       documentId: widget.document.id,
       initialTerm: text,
+      initialSourceWord: existing == null ? _selectedSourceWord : null,
       existing: existing,
     );
-    if (saved == true && mounted) setState(() => _selectedText = null);
+    if (saved == true && mounted) {
+      setState(() {
+        _selectedText = null;
+        _selectedSourceWord = null;
+      });
+    }
   }
 
   static bool get _isDesktop =>
@@ -487,107 +622,97 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       _popup = null;
     }
 
-    return CallbackShortcuts(
-      bindings: <ShortcutActivator, VoidCallback>{
-        const SingleActivator(LogicalKeyboardKey.keyF, control: true):
-            _openSearch,
-        const SingleActivator(LogicalKeyboardKey.keyF, meta: true): _openSearch,
-        const SingleActivator(LogicalKeyboardKey.escape): () {
-          if (_searchVisible) _closeSearch();
-        },
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(
-            widget.document.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          actions: [
-            IconButton(
-              tooltip: 'Find in document (Ctrl+F)',
-              icon: const Icon(Icons.search),
-              onPressed: _toggleSearch,
-            ),
-            IconButton(
-              tooltip: _settings.highlightingEnabled
-                  ? 'Hide highlights'
-                  : 'Show highlights',
-              icon: Icon(
-                _settings.highlightingEnabled
-                    ? Icons.highlight
-                    : Icons.highlight_off,
-              ),
-              onPressed: () => ref
-                  .read(settingsControllerProvider.notifier)
-                  .mutate(
-                    (s) =>
-                        s.copyWith(highlightingEnabled: !s.highlightingEnabled),
-                  ),
-            ),
-          ],
-          bottom: _searchVisible
-              ? PreferredSize(
-                  preferredSize: const Size.fromHeight(52),
-                  child: _buildSearchBar(context),
-                )
-              : null,
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          widget.document.title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
-        body: LayoutBuilder(
-          builder: (context, constraints) {
-            return Stack(
-              key: _stackKey,
-              children: [
-                PdfViewer.file(
-                  widget.document.filePath,
-                  controller: _controller,
-                  params: PdfViewerParams(
-                    textSelectionParams: PdfTextSelectionParams(
-                      enabled: true,
-                      onTextSelectionChange: _onSelectionChange,
-                    ),
-                    viewerOverlayBuilder: (context, size, handleLinkTap) => [
-                      PdfViewerScrollThumb(
-                        controller: _controller,
-                        orientation: ScrollbarOrientation.right,
-                        thumbSize: const Size(40, 48),
-                        thumbBuilder:
-                            (context, thumbSize, pageNumber, controller) {
-                              final scheme = Theme.of(context).colorScheme;
-                              return Material(
-                                color: scheme.primary,
-                                elevation: 2,
-                                borderRadius: const BorderRadius.horizontal(
-                                  left: Radius.circular(8),
-                                ),
-                                child: Center(
-                                  child: Text(
-                                    '${pageNumber ?? ''}',
-                                    style: TextStyle(
-                                      color: scheme.onPrimary,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12,
-                                    ),
+        actions: [
+          IconButton(
+            tooltip: 'Find in document (Ctrl+F)',
+            icon: const Icon(Icons.search),
+            onPressed: _toggleSearch,
+          ),
+          IconButton(
+            tooltip: _settings.highlightingEnabled
+                ? 'Hide highlights'
+                : 'Show highlights',
+            icon: Icon(
+              _settings.highlightingEnabled
+                  ? Icons.highlight
+                  : Icons.highlight_off,
+            ),
+            onPressed: () => ref
+                .read(settingsControllerProvider.notifier)
+                .mutate(
+                  (s) =>
+                      s.copyWith(highlightingEnabled: !s.highlightingEnabled),
+                ),
+          ),
+        ],
+        bottom: _searchVisible
+            ? PreferredSize(
+                preferredSize: const Size.fromHeight(52),
+                child: _buildSearchBar(context),
+              )
+            : null,
+      ),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          return Stack(
+            key: _stackKey,
+            children: [
+              PdfViewer.file(
+                widget.document.filePath,
+                controller: _controller,
+                params: PdfViewerParams(
+                  textSelectionParams: PdfTextSelectionParams(
+                    enabled: true,
+                    onTextSelectionChange: _onSelectionChange,
+                  ),
+                  viewerOverlayBuilder: (context, size, handleLinkTap) => [
+                    PdfViewerScrollThumb(
+                      controller: _controller,
+                      orientation: ScrollbarOrientation.right,
+                      thumbSize: const Size(40, 48),
+                      thumbBuilder:
+                          (context, thumbSize, pageNumber, controller) {
+                            final scheme = Theme.of(context).colorScheme;
+                            return Material(
+                              color: scheme.primary,
+                              elevation: 2,
+                              borderRadius: const BorderRadius.horizontal(
+                                left: Radius.circular(8),
+                              ),
+                              child: Center(
+                                child: Text(
+                                  '${pageNumber ?? ''}',
+                                  style: TextStyle(
+                                    color: scheme.onPrimary,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
                                   ),
                                 ),
-                              );
-                            },
-                      ),
-                    ],
-                    pageOverlaysBuilder: _settings.highlightingEnabled
-                        ? _buildPageOverlays
-                        : null,
-                    pagePaintCallbacks: _searchPaintCallbacks,
-                    onGeneralTap: _onGeneralTap,
-                    onViewerReady: _onViewerReady,
-                  ),
+                              ),
+                            );
+                          },
+                    ),
+                  ],
+                  pageOverlaysBuilder: _settings.highlightingEnabled
+                      ? _buildPageOverlays
+                      : null,
+                  pagePaintCallbacks: _searchPaintCallbacks,
+                  onGeneralTap: _onGeneralTap,
+                  onViewerReady: _onViewerReady,
                 ),
-                if (_popup != null) _buildPopup(constraints),
-                if (_selectedText != null) _buildSelectionBar(context),
-              ],
-            );
-          },
-        ),
+              ),
+              if (_popup != null) _buildPopup(constraints),
+              if (_selectedText != null) _buildSelectionBar(context),
+            ],
+          );
+        },
       ),
     );
   }

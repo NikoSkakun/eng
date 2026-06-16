@@ -35,12 +35,37 @@ enum DefinitionProviderId {
   );
 }
 
+/// A fully transparent ARGB value, used as the "no color" / no-highlight choice.
+const int kNoColor = 0x00000000;
+
 /// Default highlight color (semi-transparent amber). ARGB.
 const int kDefaultHighlightColor = 0x66FFC107;
 
 /// Default color (opaque blue) for the small inline translations shown under
 /// highlighted words.
 const int kDefaultInlineGlossColor = 0xFF1565C0;
+
+/// Default background behind the inline gloss text: none (transparent).
+const int kDefaultInlineGlossBgColor = kNoColor;
+
+/// Default inline gloss font size as a fraction of the highlighted word height.
+const double kDefaultInlineGlossFontScale = 0.46;
+
+/// Horizontal alignment of the inline gloss relative to its highlighted word.
+enum GlossAlignment {
+  left('left'),
+  center('center'),
+  right('right');
+
+  const GlossAlignment(this.id);
+  final String id;
+
+  static GlossAlignment fromId(String id) =>
+      values.firstWhere((e) => e.id == id, orElse: () => GlossAlignment.left);
+}
+
+/// Whether an ARGB value is fully transparent (the "none" highlight choice).
+bool isNoColor(int argb) => (argb >> 24 & 0xff) == 0;
 
 /// Immutable snapshot of all user settings.
 class AppSettings {
@@ -58,6 +83,11 @@ class AppSettings {
     this.highlightColor = kDefaultHighlightColor,
     this.inlineTranslationEnabled = false,
     this.inlineGlossColor = kDefaultInlineGlossColor,
+    this.inlineGlossBgColor = kDefaultInlineGlossBgColor,
+    this.inlineGlossFontScale = kDefaultInlineGlossFontScale,
+    this.inlineGlossLetterSpacing = 0.0,
+    this.inlineGlossVerticalOffset = 0.0,
+    this.inlineGlossAlignment = GlossAlignment.left,
   });
 
   /// Language of the documents being read (and of definitions).
@@ -88,8 +118,24 @@ class AppSettings {
   /// just under the word (interlinear gloss).
   final bool inlineTranslationEnabled;
 
-  /// 32-bit ARGB color of the inline translation glosses.
+  /// 32-bit ARGB color of the inline translation glosses (text color).
   final int inlineGlossColor;
+
+  /// 32-bit ARGB background drawn behind each inline gloss. Transparent = none.
+  final int inlineGlossBgColor;
+
+  /// Inline gloss font size as a fraction of the highlighted word's height.
+  final double inlineGlossFontScale;
+
+  /// Extra spacing (logical px) between gloss characters.
+  final double inlineGlossLetterSpacing;
+
+  /// Vertical position of the gloss as a fraction of the word height, measured
+  /// from the word's bottom edge. 0 sits just below; negative overlaps upward.
+  final double inlineGlossVerticalOffset;
+
+  /// Horizontal alignment of the gloss relative to its highlighted word.
+  final GlossAlignment inlineGlossAlignment;
 
   /// Whether definitions can be looked up given the current learning language.
   bool get definitionsAvailable =>
@@ -110,6 +156,11 @@ class AppSettings {
     int? highlightColor,
     bool? inlineTranslationEnabled,
     int? inlineGlossColor,
+    int? inlineGlossBgColor,
+    double? inlineGlossFontScale,
+    double? inlineGlossLetterSpacing,
+    double? inlineGlossVerticalOffset,
+    GlossAlignment? inlineGlossAlignment,
   }) {
     return AppSettings(
       learningLang: learningLang ?? this.learningLang,
@@ -126,6 +177,13 @@ class AppSettings {
       inlineTranslationEnabled:
           inlineTranslationEnabled ?? this.inlineTranslationEnabled,
       inlineGlossColor: inlineGlossColor ?? this.inlineGlossColor,
+      inlineGlossBgColor: inlineGlossBgColor ?? this.inlineGlossBgColor,
+      inlineGlossFontScale: inlineGlossFontScale ?? this.inlineGlossFontScale,
+      inlineGlossLetterSpacing:
+          inlineGlossLetterSpacing ?? this.inlineGlossLetterSpacing,
+      inlineGlossVerticalOffset:
+          inlineGlossVerticalOffset ?? this.inlineGlossVerticalOffset,
+      inlineGlossAlignment: inlineGlossAlignment ?? this.inlineGlossAlignment,
     );
   }
 }
@@ -149,6 +207,11 @@ class SettingsStore {
   static const _kHighlightColor = 'highlightColor';
   static const _kInlineTranslation = 'inlineTranslationEnabled';
   static const _kInlineGlossColor = 'inlineGlossColor';
+  static const _kInlineGlossBgColor = 'inlineGlossBgColor';
+  static const _kInlineGlossFontScale = 'inlineGlossFontScale';
+  static const _kInlineGlossLetterSpacing = 'inlineGlossLetterSpacing';
+  static const _kInlineGlossVerticalOffset = 'inlineGlossVerticalOffset';
+  static const _kInlineGlossAlignment = 'inlineGlossAlignment';
 
   AppSettings load() {
     return AppSettings(
@@ -170,6 +233,18 @@ class SettingsStore {
       inlineTranslationEnabled: _prefs.getBool(_kInlineTranslation) ?? false,
       inlineGlossColor:
           _prefs.getInt(_kInlineGlossColor) ?? kDefaultInlineGlossColor,
+      inlineGlossBgColor:
+          _prefs.getInt(_kInlineGlossBgColor) ?? kDefaultInlineGlossBgColor,
+      inlineGlossFontScale:
+          _prefs.getDouble(_kInlineGlossFontScale) ??
+          kDefaultInlineGlossFontScale,
+      inlineGlossLetterSpacing:
+          _prefs.getDouble(_kInlineGlossLetterSpacing) ?? 0.0,
+      inlineGlossVerticalOffset:
+          _prefs.getDouble(_kInlineGlossVerticalOffset) ?? 0.0,
+      inlineGlossAlignment: GlossAlignment.fromId(
+        _prefs.getString(_kInlineGlossAlignment) ?? '',
+      ),
     );
   }
 
@@ -187,5 +262,16 @@ class SettingsStore {
     await _prefs.setInt(_kHighlightColor, s.highlightColor);
     await _prefs.setBool(_kInlineTranslation, s.inlineTranslationEnabled);
     await _prefs.setInt(_kInlineGlossColor, s.inlineGlossColor);
+    await _prefs.setInt(_kInlineGlossBgColor, s.inlineGlossBgColor);
+    await _prefs.setDouble(_kInlineGlossFontScale, s.inlineGlossFontScale);
+    await _prefs.setDouble(
+      _kInlineGlossLetterSpacing,
+      s.inlineGlossLetterSpacing,
+    );
+    await _prefs.setDouble(
+      _kInlineGlossVerticalOffset,
+      s.inlineGlossVerticalOffset,
+    );
+    await _prefs.setString(_kInlineGlossAlignment, s.inlineGlossAlignment.id);
   }
 }

@@ -54,8 +54,9 @@ class DictionaryRepository {
       '''
       INSERT INTO dictionary(
         term, normalized_term, source_lang, target_lang, translation, definition,
-        notes, highlight_enabled, color_value, scope_document_id, created_at, updated_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?);
+        notes, highlight_enabled, color_value, match_partial, source_word,
+        scope_document_id, created_at, updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?);
       ''',
       [
         entry.term,
@@ -67,6 +68,8 @@ class DictionaryRepository {
         entry.notes,
         entry.highlightEnabled ? 1 : 0,
         entry.colorValue,
+        entry.matchPartial ? 1 : 0,
+        entry.sourceWord,
         entry.scopeDocumentId,
         entry.createdAt.millisecondsSinceEpoch,
         entry.updatedAt.millisecondsSinceEpoch,
@@ -81,7 +84,8 @@ class DictionaryRepository {
       UPDATE dictionary SET
         term = ?, normalized_term = ?, source_lang = ?, target_lang = ?,
         translation = ?, definition = ?, notes = ?, highlight_enabled = ?,
-        color_value = ?, scope_document_id = ?, updated_at = ?
+        color_value = ?, match_partial = ?, source_word = ?,
+        scope_document_id = ?, updated_at = ?
       WHERE id = ?;
       ''',
       [
@@ -94,6 +98,8 @@ class DictionaryRepository {
         entry.notes,
         entry.highlightEnabled ? 1 : 0,
         entry.colorValue,
+        entry.matchPartial ? 1 : 0,
+        entry.sourceWord,
         entry.scopeDocumentId,
         entry.updatedAt.millisecondsSinceEpoch,
         entry.id,
@@ -116,6 +122,8 @@ class DictionaryRepository {
       notes: row['notes'] as String?,
       highlightEnabled: (row['highlight_enabled'] as int) != 0,
       colorValue: row['color_value'] as int?,
+      matchPartial: (row['match_partial'] as int? ?? 0) != 0,
+      sourceWord: row['source_word'] as String?,
       scopeDocumentId: row['scope_document_id'] as int?,
       createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
       updatedAt: DateTime.fromMillisecondsSinceEpoch(row['updated_at'] as int),

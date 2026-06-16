@@ -17,6 +17,8 @@ class DictionaryEntry {
     this.notes,
     this.highlightEnabled = true,
     this.colorValue,
+    this.matchPartial = false,
+    this.sourceWord,
     this.scopeDocumentId,
     required this.createdAt,
     required this.updatedAt,
@@ -53,6 +55,17 @@ class DictionaryEntry {
   /// app-wide default color is used.
   final int? colorValue;
 
+  /// When true, a single-word term also matches as a *part* of longer words at
+  /// sub-word boundaries (prefix, suffix, or a hyphen/apostrophe-delimited
+  /// component) — so "perturbation" also highlights inside "perturbations" and
+  /// "small-perturbation". Only meaningful for single-word terms.
+  final bool matchPartial;
+
+  /// The word the term was originally selected from, when it was created from a
+  /// partial in-word selection (e.g. selecting "perturbation" inside
+  /// "perturbations" stores "perturbations" here). Informational.
+  final String? sourceWord;
+
   /// When set, the entry only applies to the document with this id.
   final int? scopeDocumentId;
 
@@ -75,6 +88,8 @@ class DictionaryEntry {
     Object? notes = _sentinel,
     bool? highlightEnabled,
     Object? colorValue = _sentinel,
+    bool? matchPartial,
+    Object? sourceWord = _sentinel,
     Object? scopeDocumentId = _sentinel,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -95,6 +110,10 @@ class DictionaryEntry {
       colorValue: colorValue == _sentinel
           ? this.colorValue
           : colorValue as int?,
+      matchPartial: matchPartial ?? this.matchPartial,
+      sourceWord: sourceWord == _sentinel
+          ? this.sourceWord
+          : sourceWord as String?,
       scopeDocumentId: scopeDocumentId == _sentinel
           ? this.scopeDocumentId
           : scopeDocumentId as int?,

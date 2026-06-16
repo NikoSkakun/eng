@@ -87,4 +87,67 @@ void main() {
       expect(TermMatcher(const []).findMatches('anything'), isEmpty);
     });
   });
+
+  group('TermMatcher sub-word (partial) matching', () {
+    TermMatcher partial(Map<int, String> terms) => TermMatcher(
+      terms.entries.map(
+        (e) => MatchableTerm.fromTerm(e.key, e.value, partial: true)!,
+      ),
+    );
+
+    test('matches the prefix inside a longer (inflected) word', () {
+      final m = partial({1: 'perturbation'});
+      const text = 'small perturbations occur';
+      final matches = m.findMatches(text);
+      expect(matches.length, 1);
+      expect(
+        text.substring(matches.first.start, matches.first.end),
+        'perturbation',
+      );
+    });
+
+    test('matches a hyphen-delimited component of a compound', () {
+      final m = partial({1: 'perturbation'});
+      const text = 'a small-perturbation model';
+      final matches = m.findMatches(text);
+      expect(matches.length, 1);
+      expect(
+        text.substring(matches.first.start, matches.first.end),
+        'perturbation',
+      );
+    });
+
+    test('still matches the standalone whole word (no double match)', () {
+      final m = partial({1: 'perturbation'});
+      final matches = m.findMatches('the perturbation is small');
+      expect(matches.length, 1);
+    });
+
+    test('does not match an unrelated interior substring', () {
+      // "cat" sits between letters in "scatter": no aligned boundary.
+      final m = partial({1: 'cat'});
+      expect(m.findMatches('scattered locations'), isEmpty);
+    });
+
+    test('a non-partial term never matches sub-words (default behaviour)', () {
+      final m = TermMatcher([MatchableTerm.fromTerm(1, 'perturbation')!]);
+      expect(m.findMatches('perturbations and small-perturbation'), isEmpty);
+    });
+
+    test('the partial flag is ignored for multi-word phrases', () {
+      final m = TermMatcher([
+        MatchableTerm.fromTerm(1, 'bank account', partial: true)!,
+      ]);
+      // Still whole-word phrase matching: "accounts" is not "account".
+      expect(m.findMatches('my bank accounts'), isEmpty);
+      expect(m.findMatches('my bank account here').length, 1);
+    });
+
+    test('matches multiple sub-word occurrences across the text', () {
+      final m = partial({1: 'form'});
+      // "forms" (prefix) and "trans-form" (hyphen component) both count.
+      final matches = m.findMatches('forms and trans-form');
+      expect(matches.length, 2);
+    });
+  });
 }

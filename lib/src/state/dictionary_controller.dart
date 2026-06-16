@@ -85,7 +85,7 @@ class DictionaryController extends Notifier<DictionaryState> {
         continue;
       }
       if (e.sourceLang != learningLang) continue;
-      final t = MatchableTerm.fromTerm(e.id, e.term);
+      final t = MatchableTerm.fromTerm(e.id, e.term, partial: e.matchPartial);
       if (t != null) terms.add(t);
     }
     return terms;

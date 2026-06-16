@@ -51,6 +51,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     0xFF00838F, // teal
   ];
 
+  /// Preset semi-transparent backgrounds for the inline gloss.
+  static const _glossBgColorPresets = <int>[
+    0x33FFC107, // amber
+    0x3350C878, // green
+    0x3342A5F5, // blue
+    0x33EC407A, // pink
+    0x55FFFFFF, // white
+    0x55000000, // black
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -164,6 +174,79 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
+  Widget _settingLabel(String text) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+    child: Text(text, style: Theme.of(context).textTheme.bodyMedium),
+  );
+
+  /// A row of color swatches, optionally led by a "None" (transparent) option.
+  Widget _colorWrap({
+    required List<int> presets,
+    required int selected,
+    required ValueChanged<int> onPick,
+    bool allowNone = false,
+    bool whiteCheck = false,
+  }) {
+    final noneSelected = allowNone && isNoColor(selected);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: Wrap(
+        spacing: 12,
+        runSpacing: 8,
+        children: [
+          if (allowNone)
+            _Swatch(
+              none: true,
+              selected: noneSelected,
+              onTap: () => onPick(kNoColor),
+            ),
+          for (final c in presets)
+            _Swatch(
+              color: Color(c),
+              selected: !noneSelected && selected == c,
+              checkWhite: whiteCheck,
+              onTap: () => onPick(c),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _settingSlider({
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required String valueLabel,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 0, 16, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: Slider(
+              value: value.clamp(min, max),
+              min: min,
+              max: max,
+              divisions: divisions,
+              label: valueLabel,
+              onChanged: onChanged,
+            ),
+          ),
+          SizedBox(
+            width: 72,
+            child: Text(
+              valueLabel,
+              textAlign: TextAlign.end,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = ref.watch(settingsControllerProvider);
@@ -208,38 +291,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             value: s.autoSuggestEnabled,
             onChanged: (v) => _mutate((x) => x.copyWith(autoSuggestEnabled: v)),
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-            child: Text('Highlight color', style: theme.textTheme.bodyMedium),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-            child: Wrap(
-              spacing: 12,
-              children: [
-                for (final c in _colorPresets)
-                  GestureDetector(
-                    onTap: () => _mutate((x) => x.copyWith(highlightColor: c)),
-                    child: Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: Color(c),
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: s.highlightColor == c
-                              ? theme.colorScheme.primary
-                              : theme.colorScheme.outlineVariant,
-                          width: s.highlightColor == c ? 3 : 1,
-                        ),
-                      ),
-                      child: s.highlightColor == c
-                          ? const Icon(Icons.check, size: 18)
-                          : null,
-                    ),
-                  ),
-              ],
-            ),
+          _settingLabel('Highlight color'),
+          _colorWrap(
+            presets: _colorPresets,
+            selected: s.highlightColor,
+            allowNone: true,
+            onPick: (c) => _mutate((x) => x.copyWith(highlightColor: c)),
           ),
           SwitchListTile(
             title: const Text('Show translation under each word'),
@@ -252,45 +309,77 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 _mutate((x) => x.copyWith(inlineTranslationEnabled: v)),
           ),
           if (s.inlineTranslationEnabled) ...[
+            _settingLabel('Inline translation color'),
+            _colorWrap(
+              presets: _glossColorPresets,
+              selected: s.inlineGlossColor,
+              whiteCheck: true,
+              onPick: (c) => _mutate((x) => x.copyWith(inlineGlossColor: c)),
+            ),
+            _settingLabel('Inline translation background'),
+            _colorWrap(
+              presets: _glossBgColorPresets,
+              selected: s.inlineGlossBgColor,
+              allowNone: true,
+              onPick: (c) => _mutate((x) => x.copyWith(inlineGlossBgColor: c)),
+            ),
+            _settingLabel('Text size'),
+            _settingSlider(
+              value: s.inlineGlossFontScale,
+              min: 0.25,
+              max: 1.0,
+              divisions: 15,
+              valueLabel: '${(s.inlineGlossFontScale * 100).round()}%',
+              onChanged: (v) =>
+                  _mutate((x) => x.copyWith(inlineGlossFontScale: v)),
+            ),
+            _settingLabel('Letter spacing'),
+            _settingSlider(
+              value: s.inlineGlossLetterSpacing,
+              min: -2.0,
+              max: 8.0,
+              divisions: 20,
+              valueLabel: s.inlineGlossLetterSpacing.toStringAsFixed(1),
+              onChanged: (v) =>
+                  _mutate((x) => x.copyWith(inlineGlossLetterSpacing: v)),
+            ),
+            _settingLabel('Vertical position'),
+            _settingSlider(
+              value: s.inlineGlossVerticalOffset,
+              min: -1.0,
+              max: 1.5,
+              divisions: 25,
+              valueLabel: s.inlineGlossVerticalOffset == 0
+                  ? 'below word'
+                  : '${s.inlineGlossVerticalOffset > 0 ? '+' : ''}'
+                        '${(s.inlineGlossVerticalOffset * 100).round()}%',
+              onChanged: (v) =>
+                  _mutate((x) => x.copyWith(inlineGlossVerticalOffset: v)),
+            ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-              child: Text(
-                'Inline translation color',
-                style: theme.textTheme.bodyMedium,
-              ),
+              child: Text('Alignment', style: theme.textTheme.bodyMedium),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: Wrap(
-                spacing: 12,
-                children: [
-                  for (final c in _glossColorPresets)
-                    GestureDetector(
-                      onTap: () =>
-                          _mutate((x) => x.copyWith(inlineGlossColor: c)),
-                      child: Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color: Color(c),
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: s.inlineGlossColor == c
-                                ? theme.colorScheme.primary
-                                : theme.colorScheme.outlineVariant,
-                            width: s.inlineGlossColor == c ? 3 : 1,
-                          ),
-                        ),
-                        child: s.inlineGlossColor == c
-                            ? const Icon(
-                                Icons.check,
-                                size: 18,
-                                color: Colors.white,
-                              )
-                            : null,
-                      ),
-                    ),
+              child: SegmentedButton<GlossAlignment>(
+                segments: const [
+                  ButtonSegment(
+                    value: GlossAlignment.left,
+                    icon: Icon(Icons.format_align_left),
+                  ),
+                  ButtonSegment(
+                    value: GlossAlignment.center,
+                    icon: Icon(Icons.format_align_center),
+                  ),
+                  ButtonSegment(
+                    value: GlossAlignment.right,
+                    icon: Icon(Icons.format_align_right),
+                  ),
                 ],
+                selected: {s.inlineGlossAlignment},
+                onSelectionChanged: (sel) =>
+                    _mutate((x) => x.copyWith(inlineGlossAlignment: sel.first)),
               ),
             ),
           ],
@@ -455,6 +544,53 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           isDense: true,
         ),
         onChanged: onChanged,
+      ),
+    );
+  }
+}
+
+/// A round color swatch used by the highlight/gloss pickers. With [none] it
+/// renders a transparent "no color" option.
+class _Swatch extends StatelessWidget {
+  const _Swatch({
+    required this.selected,
+    required this.onTap,
+    this.color,
+    this.none = false,
+    this.checkWhite = false,
+  });
+
+  final bool selected;
+  final VoidCallback onTap;
+  final Color? color;
+  final bool none;
+  final bool checkWhite;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: none ? scheme.surface : color,
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: selected ? scheme.primary : scheme.outlineVariant,
+            width: selected ? 3 : 1,
+          ),
+        ),
+        child: none
+            ? Icon(Icons.block, size: 18, color: scheme.outline)
+            : (selected
+                  ? Icon(
+                      Icons.check,
+                      size: 18,
+                      color: checkWhite ? Colors.white : null,
+                    )
+                  : null),
       ),
     );
   }

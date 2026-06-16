@@ -13,7 +13,7 @@ class AppDatabase {
   final Database db;
 
   /// Bump when the schema changes and add a branch in [_migrate].
-  static const int schemaVersion = 2;
+  static const int schemaVersion = 3;
 
   /// Open (creating if needed) the database at [path] and run migrations.
   factory AppDatabase.open(String path) {
@@ -61,6 +61,8 @@ class AppDatabase {
           notes TEXT,
           highlight_enabled INTEGER NOT NULL DEFAULT 1,
           color_value INTEGER,
+          match_partial INTEGER NOT NULL DEFAULT 0,
+          source_word TEXT,
           scope_document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL
@@ -86,6 +88,14 @@ class AppDatabase {
       // v1 -> v2: per-document saved view (exact scroll position + zoom).
       db.execute('ALTER TABLE documents ADD COLUMN view_matrix TEXT;');
       version = 2;
+    }
+    if (version == 2) {
+      // v2 -> v3: per-entry sub-word matching + remembered parent word.
+      db.execute(
+        'ALTER TABLE dictionary ADD COLUMN match_partial INTEGER NOT NULL DEFAULT 0;',
+      );
+      db.execute('ALTER TABLE dictionary ADD COLUMN source_word TEXT;');
+      version = 3;
     }
     db.userVersion = schemaVersion;
   }
