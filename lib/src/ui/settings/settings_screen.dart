@@ -385,6 +385,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ],
           const Divider(),
           _SectionHeader('Reading'),
+          SwitchListTile(
+            title: const Text('Clean up copied text'),
+            subtitle: const Text(
+              'When copying across lines, join them into continuous text and '
+              'repair words split by a line-break hyphen',
+            ),
+            value: s.joinCopiedLines,
+            onChanged: (v) => _mutate((x) => x.copyWith(joinCopiedLines: v)),
+          ),
           _settingLabel('Scroll speed'),
           _settingSlider(
             value: s.scrollSensitivity,

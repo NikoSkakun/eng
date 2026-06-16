@@ -52,6 +52,32 @@ abstract final class TextNormalizer {
   static String trimEdgePunctuation(String input) =>
       input.replaceAll(_edgePunctuation, '');
 
+  // A word-splitting hyphen at a line wrap: ASCII hyphen-minus, Unicode hyphen,
+  // non-breaking hyphen, or a soft hyphen. (En/em dashes are deliberately
+  // excluded — they are punctuation, not word breaks.)
+  static final _wrapHyphen = RegExp(
+    r'(\p{L})[-‐‑­][ \t]*(?:\r?\n)+[ \t]*(\p{Ll})',
+    unicode: true,
+  );
+  static final _lineBreaks = RegExp(r'[ \t]*(?:\r?\n)+[ \t]*');
+
+  /// Rewrite text selected/copied across several lines into continuous text:
+  ///
+  ///  * a word hyphenated at a line wrap is rejoined — `"undis-\nturbed"` ->
+  ///    `"undisturbed"` — but only when a letter precedes the hyphen and a
+  ///    *lowercase* letter follows the break, the signature of soft (line-wrap)
+  ///    hyphenation rather than a genuine compound (`"well-\nKnown"`);
+  ///  * every remaining run of line breaks (with the spaces hugging it) becomes
+  ///    a single space, so the result reads as one unbroken passage.
+  static String joinWrappedLines(String input) {
+    if (input.isEmpty) return input;
+    final dehyphenated = input.replaceAllMapped(
+      _wrapHyphen,
+      (m) => '${m[1]}${m[2]}',
+    );
+    return dehyphenated.replaceAll(_lineBreaks, ' ');
+  }
+
   /// Normalize an arbitrary string into a canonical lookup/dedup key:
   /// trim, unify punctuation, lower-case, and collapse internal whitespace to
   /// single spaces.

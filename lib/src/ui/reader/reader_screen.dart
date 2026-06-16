@@ -190,6 +190,56 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     return false;
   }
 
+  /// Copy the current selection to the clipboard, rewriting line-wrapped text
+  /// into continuous text (newlines -> spaces, hyphenated breaks repaired) per
+  /// the [AppSettings.joinCopiedLines] setting. pdfrx's own copy writes the raw
+  /// text verbatim, so we re-implement copy here and suppress its default.
+  Future<void> _copyTransformed() async {
+    if (!_controller.isReady) return;
+    final delegate = _controller.textSelectionDelegate;
+    if (!delegate.isCopyAllowed || !delegate.hasSelectedText) return;
+    final raw = await delegate.getSelectedText();
+    if (!mounted || raw.isEmpty) return;
+    await Clipboard.setData(
+      ClipboardData(text: TextNormalizer.joinWrappedLines(raw)),
+    );
+    await delegate.clearTextSelection();
+  }
+
+  /// pdfrx invokes this before its built-in key handling; returning non-null
+  /// short-circuits it. We hijack Ctrl/Cmd+C — only while line-joining is on —
+  /// so the clipboard gets cleaned-up text instead of pdfrx's raw copy. This
+  /// fires only when the viewer itself has focus (not, e.g., the search field).
+  bool? _onViewerKey(
+    PdfViewerKeyHandlerParams params,
+    LogicalKeyboardKey key,
+    bool isRealKeyPress,
+  ) {
+    if (key != LogicalKeyboardKey.keyC || !_settings.joinCopiedLines) {
+      return null; // let pdfrx handle it normally
+    }
+    final kb = HardwareKeyboard.instance;
+    if (!kb.isControlPressed && !kb.isMetaPressed) return null;
+    unawaited(_copyTransformed());
+    return true; // handled — suppress pdfrx's default (raw) copy
+  }
+
+  /// Swap the context menu's Copy action for our line-joining one (when on).
+  void _customizeContextMenu(
+    PdfViewerContextMenuBuilderParams params,
+    List<ContextMenuButtonItem> items,
+  ) {
+    if (!_settings.joinCopiedLines) return;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].type == ContextMenuButtonType.copy) {
+        items[i] = ContextMenuButtonItem(
+          onPressed: () => unawaited(_copyTransformed()),
+          type: ContextMenuButtonType.copy,
+        );
+      }
+    }
+  }
+
   void _openSearch() {
     if (!_searchVisible) setState(() => _searchVisible = true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -752,6 +802,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       pageOverlaysBuilder: highlighting ? _buildPageOverlays : null,
       pagePaintCallbacks: paintCallbacks.isEmpty ? null : paintCallbacks,
       scrollByMouseWheel: scrollSensitivity,
+      onKey: _onViewerKey,
+      customizeContextMenuItems: _customizeContextMenu,
       onGeneralTap: _onGeneralTap,
       onViewerReady: _onViewerReady,
       calculateInitialPageNumber: _calculateInitialPageNumber,

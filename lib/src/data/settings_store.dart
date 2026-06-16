@@ -94,6 +94,7 @@ class AppSettings {
     this.inlineGlossVerticalOffset = 0.0,
     this.inlineGlossAlignment = GlossAlignment.left,
     this.scrollSensitivity = kDefaultScrollSensitivity,
+    this.joinCopiedLines = true,
   });
 
   /// Language of the documents being read (and of definitions).
@@ -147,6 +148,10 @@ class AppSettings {
   /// scrolls farther per notch; pdfrx's untouched default is 0.2.
   final double scrollSensitivity;
 
+  /// When copying text spanning multiple lines, join the lines into continuous
+  /// text (newlines -> spaces) and repair words split by a line-break hyphen.
+  final bool joinCopiedLines;
+
   /// Whether definitions can be looked up given the current learning language.
   bool get definitionsAvailable =>
       definitionProvider != DefinitionProviderId.none &&
@@ -172,6 +177,7 @@ class AppSettings {
     double? inlineGlossVerticalOffset,
     GlossAlignment? inlineGlossAlignment,
     double? scrollSensitivity,
+    bool? joinCopiedLines,
   }) {
     return AppSettings(
       learningLang: learningLang ?? this.learningLang,
@@ -196,6 +202,7 @@ class AppSettings {
           inlineGlossVerticalOffset ?? this.inlineGlossVerticalOffset,
       inlineGlossAlignment: inlineGlossAlignment ?? this.inlineGlossAlignment,
       scrollSensitivity: scrollSensitivity ?? this.scrollSensitivity,
+      joinCopiedLines: joinCopiedLines ?? this.joinCopiedLines,
     );
   }
 }
@@ -225,6 +232,7 @@ class SettingsStore {
   static const _kInlineGlossVerticalOffset = 'inlineGlossVerticalOffset';
   static const _kInlineGlossAlignment = 'inlineGlossAlignment';
   static const _kScrollSensitivity = 'scrollSensitivity';
+  static const _kJoinCopiedLines = 'joinCopiedLines';
 
   AppSettings load() {
     return AppSettings(
@@ -260,6 +268,7 @@ class SettingsStore {
       ),
       scrollSensitivity:
           _prefs.getDouble(_kScrollSensitivity) ?? kDefaultScrollSensitivity,
+      joinCopiedLines: _prefs.getBool(_kJoinCopiedLines) ?? true,
     );
   }
 
@@ -289,5 +298,6 @@ class SettingsStore {
     );
     await _prefs.setString(_kInlineGlossAlignment, s.inlineGlossAlignment.id);
     await _prefs.setDouble(_kScrollSensitivity, s.scrollSensitivity);
+    await _prefs.setBool(_kJoinCopiedLines, s.joinCopiedLines);
   }
 }
