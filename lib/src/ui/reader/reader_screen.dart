@@ -41,10 +41,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   /// without bound (pages far from the current one are evicted).
   static const int _maxCachedPages = 100;
 
-  /// Per-page count of empty-text extraction attempts (progressive loading).
-  final Map<int, int> _emptyTextRetries = {};
-  static const int _maxEmptyTextRetries = 6;
-
   TermMatcher? _matcher;
 
   /// Incremented whenever the matcher is rebuilt (dictionary/language change),
@@ -216,7 +212,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     _matcherGeneration++;
     _occurrencesByPage.clear();
     _loadingPages.clear();
-    _emptyTextRetries.clear();
   }
 
   Future<void> _ensurePageComputed(PdfPage page) async {
@@ -231,27 +226,22 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     _loadingPages.add(n);
     List<_Occurrence>? result;
     try {
-      final pageText = await page.loadStructuredText();
+      // Large documents load pages progressively: loadStructuredText on a
+      // not-yet-loaded page returns empty text. Previously we polled a few
+      // times and then cached the empty result permanently, which left the
+      // page un-highlighted forever (and bit harder in release, where the UI
+      // reaches this code before the text layer is ready). Instead, wait for
+      // the page's load event (event-driven, no polling) before extracting.
+      final loaded = await page.waitForLoaded(
+        timeout: const Duration(seconds: 30),
+      );
       if (!mounted || gen != _matcherGeneration) {
         _loadingPages.remove(n);
         return;
       }
-      // While a large document is still progressively loading, a page's text
-      // can come back empty before it's ready. Don't cache that empty result
-      // (which would leave the page permanently un-highlighted) — retry a few
-      // times with backoff so highlights appear once the text loads.
-      if (pageText.fullText.isEmpty &&
-          (_emptyTextRetries[n] ?? 0) < _maxEmptyTextRetries) {
-        final attempt = (_emptyTextRetries[n] ?? 0) + 1;
-        _emptyTextRetries[n] = attempt;
+      final pageText = await (loaded ?? page).loadStructuredText();
+      if (!mounted || gen != _matcherGeneration) {
         _loadingPages.remove(n);
-        Future.delayed(Duration(milliseconds: 200 * attempt), () {
-          if (mounted &&
-              gen == _matcherGeneration &&
-              !_occurrencesByPage.containsKey(n)) {
-            setState(() {}); // re-invoke the overlay builder → recompute
-          }
-        });
         return;
       }
 
@@ -300,7 +290,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       if (_occurrencesByPage.length <= _maxCachedPages) break;
       if ((k - current).abs() <= 5) continue; // keep nearby pages
       _occurrencesByPage.remove(k);
-      _emptyTextRetries.remove(k);
     }
   }
 
