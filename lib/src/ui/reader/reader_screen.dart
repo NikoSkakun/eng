@@ -37,9 +37,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   final Map<int, List<_Occurrence>> _occurrencesByPage = {};
   final Set<int> _loadingPages = {};
 
+  /// Soft cap on cached pages so a long reading session doesn't grow memory
+  /// without bound (pages far from the current one are evicted).
+  static const int _maxCachedPages = 100;
+
   /// Per-page count of empty-text extraction attempts (progressive loading).
   final Map<int, int> _emptyTextRetries = {};
-  static const int _maxEmptyTextRetries = 8;
+  static const int _maxEmptyTextRetries = 6;
 
   TermMatcher? _matcher;
 
@@ -59,12 +63,15 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   // "perturbations") so a new entry can default to sub-word matching.
   String? _selectedSourceWord;
   Timer? _selectionDebounce;
+  // Bumped on every selection change so a stale in-flight debounce callback
+  // (whose timer was cancelled after it already started awaiting) can detect it
+  // is superseded and not overwrite newer selection state.
+  int _selectionGeneration = 0;
   Timer? _viewSaveDebounce;
 
   // In-document text search. Created once the viewer/controller is ready
   // (the searcher's constructor touches the document immediately).
   PdfTextSearcher? _searcher;
-  List<PdfViewerPagePaintCallback>? _searchPaintCallbacks;
   final _searchController = TextEditingController();
   final _searchFocus = FocusNode();
   bool _searchVisible = false;
@@ -73,6 +80,19 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   // builds, e.g. on scroll) always see the latest values.
   late AppSettings _settings;
   late DictionaryState _dictState;
+
+  // Memoized viewer params. Rebuilding PdfViewerParams (with fresh closures)
+  // on every setState makes pdfrx treat params as changed every frame, so we
+  // cache it and only rebuild when an input it depends on actually changes.
+  PdfViewerParams? _viewerParams;
+  bool? _paramsHighlighting;
+  bool _paramsHasSearcher = false;
+  PdfTextSelectionParams? _textSelectionParams;
+
+  // Cache of laid-out gloss text painters (keyed by text + size); cleared when
+  // the gloss style changes. Avoids re-laying out text every paint frame.
+  final Map<String, TextPainter> _glossPainters = {};
+  String _glossStyleSig = '';
 
   @override
   void initState() {
@@ -97,7 +117,15 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     _hideTimer?.cancel();
     _selectionDebounce?.cancel();
     _viewSaveDebounce?.cancel();
+    _disposeGlossPainters();
     super.dispose();
+  }
+
+  void _disposeGlossPainters() {
+    for (final p in _glossPainters.values) {
+      p.dispose();
+    }
+    _glossPainters.clear();
   }
 
   void _onSearchChanged() {
@@ -216,7 +244,24 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
     _occurrencesByPage[n] = result;
     _loadingPages.remove(n);
+    if (_occurrencesByPage.length > _maxCachedPages) _evictFarPages();
     setState(() {});
+  }
+
+  /// Drop cached pages farthest from the *current viewport* page to bound memory
+  /// over a long session. Centring on the viewport (not the just-loaded page,
+  /// which may be a prefetch far ahead) avoids evicting visible pages and
+  /// re-computing them during fast scrolling.
+  void _evictFarPages() {
+    final current = (_controller.isReady ? _controller.pageNumber : null) ?? 1;
+    final keys = _occurrencesByPage.keys.toList()
+      ..sort((a, b) => (b - current).abs().compareTo((a - current).abs()));
+    for (final k in keys) {
+      if (_occurrencesByPage.length <= _maxCachedPages) break;
+      if ((k - current).abs() <= 5) continue; // keep nearby pages
+      _occurrencesByPage.remove(k);
+      _emptyTextRetries.remove(k);
+    }
   }
 
   /// Map a PDF-space rect (bottom-left origin) to the page overlay's
@@ -226,6 +271,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   Rect _mapRect(PdfRect pr, Rect pageRect, PdfPage page) =>
       pr.toRect(page: page, scaledPageSize: pageRect.size);
 
+  /// Lightweight per-page interaction layer: a single hover [MouseRegion] and a
+  /// single full-page [PdfOverlayInteractionRegion] for tap/long-press, both
+  /// hit-testing the cached rects on demand. The *visuals* (highlight boxes and
+  /// glosses) are painted in [_paintHighlights], so this builder — which pdfrx
+  /// re-runs on every scroll frame — allocates only two widgets per page
+  /// regardless of how many terms are highlighted.
   List<Widget> _buildPageOverlays(
     BuildContext context,
     Rect pageRect,
@@ -238,165 +289,180 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
     if (occ.isEmpty) return const [];
 
-    final defaultColor = Color(_settings.highlightColor);
-    final showGloss = _settings.inlineTranslationEnabled;
-    final hits = <_HitRect>[];
-    final widgets = <Widget>[];
-
-    for (final o in occ) {
-      final entry = _dictState.byId[o.entryId];
-      if (entry == null || !entry.highlightEnabled) continue;
-      final color = entry.colorValue != null
-          ? Color(entry.colorValue!)
-          : defaultColor;
-      Rect? firstRect;
-      for (final pr in o.rects) {
-        final r = _mapRect(pr, pageRect, page);
-        if (r.width <= 0 || r.height <= 0) continue;
-        firstRect ??= r;
-        hits.add(_HitRect(r, entry));
-        widgets.add(
-          Positioned.fromRect(
-            rect: r,
-            child: PdfOverlayInteractionRegion(
-              onTap: (d) {
-                _showPopup(entry, d.globalPosition);
-                return true;
-              },
-              onLongPress: (d) {
-                unawaited(_openEdit(entry));
-                return true;
-              },
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-          ),
-        );
-      }
-
-      // Inline translation gloss under the first line of the occurrence.
-      final translation = entry.translation?.trim();
-      if (showGloss &&
-          firstRect != null &&
-          translation != null &&
-          translation.isNotEmpty) {
-        widgets.add(_buildGloss(firstRect, translation, pageRect));
-      }
-    }
-
-    // A single transparent hover layer for the whole page. It tracks the mouse
-    // (desktop) without blocking taps, panning or text selection; on touch
-    // devices it never fires and the tap path above is used instead.
-    widgets.insert(
-      0,
+    return [
       Positioned.fill(
         child: MouseRegion(
           opaque: false,
           hitTestBehavior: HitTestBehavior.translucent,
-          onHover: (e) => _onHover(e.localPosition, e.position, hits),
+          onHover: (e) {
+            final entry = _hitEntry(e.localPosition, pageRect, page);
+            if (entry != null) {
+              _hideTimer?.cancel();
+              _showPopup(entry, e.position);
+            } else {
+              _scheduleHide();
+            }
+          },
           onExit: (_) => _scheduleHide(),
-        ),
-      ),
-    );
-    return widgets;
-  }
-
-  /// A small interlinear translation rendered near [wordRect], configurable via
-  /// the inline-gloss settings (color, background, size, spacing, vertical
-  /// offset and alignment). Pointer-transparent so it doesn't affect hover/tap.
-  Widget _buildGloss(Rect wordRect, String text, Rect pageRect) {
-    final s = _settings;
-    final fontSize = (wordRect.height * s.inlineGlossFontScale).clamp(
-      6.0,
-      96.0,
-    );
-    final top = wordRect.bottom + s.inlineGlossVerticalOffset * wordRect.height;
-
-    // Anchor the gloss and shift it by a fraction of its own width so it aligns
-    // left / centered / right against the word without measuring the text.
-    // [maxWidth] bounds the gloss to the space available from the anchor in its
-    // grow direction so it can't run off a page edge.
-    final double anchorX;
-    final double translateX;
-    final double maxWidth;
-    switch (s.inlineGlossAlignment) {
-      case GlossAlignment.left:
-        anchorX = wordRect.left;
-        translateX = 0.0;
-        maxWidth = pageRect.width - wordRect.left;
-      case GlossAlignment.center:
-        anchorX = wordRect.center.dx;
-        translateX = -0.5;
-        final toLeft = wordRect.center.dx;
-        final toRight = pageRect.width - wordRect.center.dx;
-        maxWidth = (toLeft < toRight ? toLeft : toRight) * 2;
-      case GlossAlignment.right:
-        anchorX = wordRect.right;
-        translateX = -1.0;
-        maxWidth = wordRect.right;
-    }
-    final clampedMaxWidth = maxWidth.clamp(8.0, pageRect.width);
-
-    Widget label = Text(
-      text,
-      maxLines: 1,
-      softWrap: false,
-      overflow: TextOverflow.ellipsis,
-      style: TextStyle(
-        color: Color(s.inlineGlossColor),
-        fontSize: fontSize,
-        height: 1.0,
-        fontWeight: FontWeight.w500,
-        letterSpacing: s.inlineGlossLetterSpacing,
-      ),
-    );
-    if (!isNoColor(s.inlineGlossBgColor)) {
-      label = DecoratedBox(
-        decoration: BoxDecoration(
-          color: Color(s.inlineGlossBgColor),
-          borderRadius: BorderRadius.circular(2),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 1),
-          child: label,
-        ),
-      );
-    }
-
-    return Positioned(
-      left: anchorX,
-      top: top,
-      child: IgnorePointer(
-        child: FractionalTranslation(
-          translation: Offset(translateX, 0),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: clampedMaxWidth),
-            child: label,
+          child: PdfOverlayInteractionRegion(
+            onTap: (d) {
+              final entry = _hitEntry(d.localPosition, pageRect, page);
+              if (entry == null) return false; // let pdfrx handle the tap
+              _showPopup(entry, d.globalPosition);
+              return true;
+            },
+            onLongPress: (d) {
+              final entry = _hitEntry(d.localPosition, pageRect, page);
+              if (entry == null) return false;
+              unawaited(_openEdit(entry));
+              return true;
+            },
+            child: const SizedBox.expand(),
           ),
         ),
       ),
-    );
+    ];
   }
 
-  void _onHover(Offset pageLocal, Offset global, List<_HitRect> hits) {
-    _HitRect? best;
-    for (final h in hits) {
-      if (h.rect.contains(pageLocal)) {
-        if (best == null || h.rect.longestSide < best.rect.longestSide) {
-          best = h;
+  /// The smallest highlighted term whose rect contains [local] (page-overlay
+  /// coordinates), or null. Mapping happens only on a pointer event, not per
+  /// frame, so this stays cheap even with many highlights on a page.
+  DictionaryEntry? _hitEntry(Offset local, Rect pageRect, PdfPage page) {
+    final occ = _occurrencesByPage[page.pageNumber];
+    if (occ == null) return null;
+    DictionaryEntry? best;
+    var bestArea = double.infinity;
+    for (final o in occ) {
+      final entry = _dictState.byId[o.entryId];
+      if (entry == null || !entry.highlightEnabled) continue;
+      for (final pr in o.rects) {
+        final r = _mapRect(pr, pageRect, page);
+        if (r.contains(local)) {
+          final area = r.width * r.height;
+          if (area < bestArea) {
+            bestArea = area;
+            best = entry;
+          }
         }
       }
     }
-    if (best != null) {
-      _hideTimer?.cancel();
-      _showPopup(best.entry, global);
-    } else {
-      _scheduleHide();
+    return best;
+  }
+
+  /// Paints dictionary highlight boxes and inline glosses directly onto the
+  /// page canvas (document coordinates). Runs inside pdfrx's page paint, so it
+  /// is GPU-cheap and avoids rebuilding widgets while scrolling.
+  void _paintHighlights(Canvas canvas, Rect pageRect, PdfPage page) {
+    final occ = _occurrencesByPage[page.pageNumber];
+    if (occ == null || occ.isEmpty) return;
+    final s = _settings;
+    final showGloss = s.inlineTranslationEnabled;
+
+    // Invalidate the gloss text cache if the gloss style changed.
+    final sig =
+        '${s.inlineGlossColor}|${s.inlineGlossBgColor}|'
+        '${s.inlineGlossFontScale}|${s.inlineGlossLetterSpacing}|'
+        '${s.inlineGlossAlignment.id}';
+    if (sig != _glossStyleSig) {
+      _glossStyleSig = sig;
+      _disposeGlossPainters();
     }
+
+    final fill = Paint()..style = PaintingStyle.fill;
+    for (final o in occ) {
+      final entry = _dictState.byId[o.entryId];
+      if (entry == null || !entry.highlightEnabled || o.rects.isEmpty) continue;
+      final colorVal = entry.colorValue ?? s.highlightColor;
+      if (!isNoColor(colorVal)) {
+        fill.color = Color(colorVal);
+        for (final pr in o.rects) {
+          final r = pr.toRectInDocument(page: page, pageRect: pageRect);
+          canvas.drawRRect(
+            RRect.fromRectAndRadius(r, const Radius.circular(2)),
+            fill,
+          );
+        }
+      }
+      if (showGloss) {
+        final translation = entry.translation?.trim();
+        if (translation != null && translation.isNotEmpty) {
+          final first = o.rects.first.toRectInDocument(
+            page: page,
+            pageRect: pageRect,
+          );
+          _paintGloss(canvas, first, translation, s, pageRect);
+        }
+      }
+    }
+  }
+
+  void _paintGloss(
+    Canvas canvas,
+    Rect wordRect,
+    String text,
+    AppSettings s,
+    Rect pageRect,
+  ) {
+    final fontSize = (wordRect.height * s.inlineGlossFontScale).clamp(
+      4.0,
+      200.0,
+    );
+    final key = '$text ${fontSize.toStringAsFixed(1)}';
+    var tp = _glossPainters[key];
+    if (tp == null) {
+      tp = TextPainter(
+        text: TextSpan(
+          text: text,
+          style: TextStyle(
+            color: Color(s.inlineGlossColor),
+            fontSize: fontSize,
+            height: 1.0,
+            fontWeight: FontWeight.w500,
+            letterSpacing: s.inlineGlossLetterSpacing,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+        maxLines: 1,
+        ellipsis: '…',
+        // Lay out at a fixed generous width (document points) rather than the
+        // page width, so the text+size cache key stays valid across pages of
+        // different widths. Glosses are short, so this never actually wraps.
+      )..layout(maxWidth: 3000.0);
+      // Evict the single oldest entry when over cap — never dispose the whole
+      // cache mid-paint (other painters may still be needed this frame).
+      if (_glossPainters.length >= 256) {
+        final oldest = _glossPainters.keys.first;
+        _glossPainters.remove(oldest)?.dispose();
+      }
+      _glossPainters[key] = tp;
+    }
+
+    final top = wordRect.bottom + s.inlineGlossVerticalOffset * wordRect.height;
+    final double anchored;
+    switch (s.inlineGlossAlignment) {
+      case GlossAlignment.left:
+        anchored = wordRect.left;
+      case GlossAlignment.center:
+        anchored = wordRect.center.dx - tp.width / 2;
+      case GlossAlignment.right:
+        anchored = wordRect.right - tp.width;
+    }
+    // Keep the gloss within the page horizontally.
+    final maxLeft = (pageRect.right - tp.width).clamp(
+      pageRect.left,
+      pageRect.right,
+    );
+    final left = anchored.clamp(pageRect.left, maxLeft);
+    if (!isNoColor(s.inlineGlossBgColor)) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(left - 1, top, tp.width + 2, tp.height),
+          const Radius.circular(2),
+        ),
+        Paint()..color = Color(s.inlineGlossBgColor),
+      );
+    }
+    tp.paint(canvas, Offset(left, top));
   }
 
   void _showPopup(DictionaryEntry entry, Offset global) {
@@ -425,6 +491,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
   void _onSelectionChange(PdfTextSelection selection) {
     _selectionDebounce?.cancel();
+    final gen = ++_selectionGeneration;
     if (!selection.hasSelectedText) {
       if (_selectedText != null) {
         setState(() {
@@ -434,18 +501,24 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       }
       return;
     }
-    _selectionDebounce = Timer(const Duration(milliseconds: 300), () async {
-      final raw = (await selection.getSelectedText()).trim();
-      if (!mounted) return;
+    // Short debounce (pdfrx already debounces ~300ms before calling us); fetch
+    // the selection ranges ONCE and derive both the text and the parent word
+    // from them, instead of calling getSelectedText + getSelectedTextRanges
+    // separately (each loads structured text on the engine).
+    _selectionDebounce = Timer(const Duration(milliseconds: 150), () async {
+      final ranges = await selection.getSelectedTextRanges();
+      // Bail if unmounted or a newer selection change superseded this one while
+      // we were awaiting (cancel() can't stop an already-running async body).
+      if (!mounted || gen != _selectionGeneration) return;
       // Collapse whitespace and drop leading/trailing punctuation (e.g. a
       // trailing comma/period from double-clicking "oblate,").
-      final text = TextNormalizer.trimEdgePunctuation(
-        raw.replaceAll(RegExp(r'\s+'), ' ').trim(),
-      );
-      final parent = text.isEmpty
-          ? null
-          : await _detectParentWord(selection, text);
-      if (!mounted) return;
+      final raw = ranges
+          .map((r) => r.text)
+          .join()
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
+      final text = TextNormalizer.trimEdgePunctuation(raw);
+      final parent = text.isEmpty ? null : _detectParentWord(ranges, text);
       setState(() {
         _selectedText = text.isEmpty ? null : text;
         _selectedSourceWord = parent;
@@ -456,13 +529,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   /// If [text] is a single word selected from *inside* a longer word, return
   /// that longer (parent) word; otherwise null. Used to default new entries to
   /// sub-word matching and to remember where they came from.
-  Future<String?> _detectParentWord(
-    PdfTextSelection selection,
-    String text,
-  ) async {
+  String? _detectParentWord(List<PdfPageTextRange> ranges, String text) {
     if (text.contains(' ')) return null; // multi-word selection
     try {
-      final ranges = await selection.getSelectedTextRanges();
       if (ranges.length != 1) return null;
       final r = ranges.first;
       final full = r.pageText.fullText;
@@ -559,12 +628,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           .updatePageCount(widget.document, count);
       _restoreView(controller, count);
       if (_searcher == null) {
+        // Creating the searcher changes the paint-callback set, so the
+        // memoized params rebuild once on the next build().
         final searcher = PdfTextSearcher(controller)
           ..addListener(_onSearchChanged);
-        setState(() {
-          _searcher = searcher;
-          _searchPaintCallbacks = [searcher.pageTextMatchPaintCallback];
-        });
+        setState(() => _searcher = searcher);
       }
     });
   }
@@ -609,6 +677,85 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
   }
 
+  /// First page to render, so we open near the saved position instead of
+  /// painting page 1 and then jumping in [_restoreView].
+  int? _calculateInitialPageNumber(
+    PdfDocument document,
+    PdfViewerController controller,
+  ) {
+    final last = widget.document.lastPage;
+    return (last > 1 && last <= document.pages.length) ? last : null;
+  }
+
+  /// (Re)build the memoized [PdfViewerParams] only when an input it depends on
+  /// changes — highlighting on/off, or whether the searcher exists. Keeping the
+  /// same params object across builds stops pdfrx from treating params as
+  /// "changed" on every setState (which it does by comparing closures).
+  void _ensureViewerParams() {
+    final highlighting = _settings.highlightingEnabled;
+    final hasSearcher = _searcher != null;
+    if (_viewerParams != null &&
+        _paramsHighlighting == highlighting &&
+        _paramsHasSearcher == hasSearcher) {
+      return;
+    }
+    _paramsHighlighting = highlighting;
+    _paramsHasSearcher = hasSearcher;
+    _textSelectionParams ??= PdfTextSelectionParams(
+      enabled: true,
+      onTextSelectionChange: _onSelectionChange,
+    );
+    final paintCallbacks = <PdfViewerPagePaintCallback>[
+      if (highlighting) _paintHighlights,
+      if (_searcher != null) _searcher!.pageTextMatchPaintCallback,
+    ];
+    _viewerParams = PdfViewerParams(
+      textSelectionParams: _textSelectionParams,
+      viewerOverlayBuilder: _buildViewerOverlay,
+      pageOverlaysBuilder: highlighting ? _buildPageOverlays : null,
+      pagePaintCallbacks: paintCallbacks.isEmpty ? null : paintCallbacks,
+      onGeneralTap: _onGeneralTap,
+      onViewerReady: _onViewerReady,
+      calculateInitialPageNumber: _calculateInitialPageNumber,
+    );
+  }
+
+  /// Stable [PdfViewerParams.viewerOverlayBuilder] (the scroll thumb). Extracted
+  /// to a method so it isn't a fresh closure on every build.
+  List<Widget> _buildViewerOverlay(
+    BuildContext context,
+    Size size,
+    PdfViewerHandleLinkTap handleLinkTap,
+  ) {
+    return [
+      PdfViewerScrollThumb(
+        controller: _controller,
+        orientation: ScrollbarOrientation.right,
+        thumbSize: const Size(40, 48),
+        thumbBuilder: (context, thumbSize, pageNumber, controller) {
+          final scheme = Theme.of(context).colorScheme;
+          return Material(
+            color: scheme.primary,
+            elevation: 2,
+            borderRadius: const BorderRadius.horizontal(
+              left: Radius.circular(8),
+            ),
+            child: Center(
+              child: Text(
+                '${pageNumber ?? ''}',
+                style: TextStyle(
+                  color: scheme.onPrimary,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     _settings = ref.watch(settingsControllerProvider);
@@ -621,6 +768,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       _rebuildMatcher();
       _popup = null;
     }
+    _ensureViewerParams();
 
     return Scaffold(
       appBar: AppBar(
@@ -667,46 +815,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
               PdfViewer.file(
                 widget.document.filePath,
                 controller: _controller,
-                params: PdfViewerParams(
-                  textSelectionParams: PdfTextSelectionParams(
-                    enabled: true,
-                    onTextSelectionChange: _onSelectionChange,
-                  ),
-                  viewerOverlayBuilder: (context, size, handleLinkTap) => [
-                    PdfViewerScrollThumb(
-                      controller: _controller,
-                      orientation: ScrollbarOrientation.right,
-                      thumbSize: const Size(40, 48),
-                      thumbBuilder:
-                          (context, thumbSize, pageNumber, controller) {
-                            final scheme = Theme.of(context).colorScheme;
-                            return Material(
-                              color: scheme.primary,
-                              elevation: 2,
-                              borderRadius: const BorderRadius.horizontal(
-                                left: Radius.circular(8),
-                              ),
-                              child: Center(
-                                child: Text(
-                                  '${pageNumber ?? ''}',
-                                  style: TextStyle(
-                                    color: scheme.onPrimary,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
-                    ),
-                  ],
-                  pageOverlaysBuilder: _settings.highlightingEnabled
-                      ? _buildPageOverlays
-                      : null,
-                  pagePaintCallbacks: _searchPaintCallbacks,
-                  onGeneralTap: _onGeneralTap,
-                  onViewerReady: _onViewerReady,
-                ),
+                params: _viewerParams!,
               ),
               if (_popup != null) _buildPopup(constraints),
               if (_selectedText != null) _buildSelectionBar(context),
@@ -859,13 +968,6 @@ class _Occurrence {
   const _Occurrence(this.entryId, this.rects);
   final int entryId;
   final List<PdfRect> rects;
-}
-
-/// A hover/tap target rect (Flutter space) bound to its dictionary entry.
-class _HitRect {
-  const _HitRect(this.rect, this.entry);
-  final Rect rect;
-  final DictionaryEntry entry;
 }
 
 class _PopupModel {
