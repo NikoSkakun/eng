@@ -52,11 +52,20 @@ abstract final class TextNormalizer {
   static String trimEdgePunctuation(String input) =>
       input.replaceAll(_edgePunctuation, '');
 
-  // A word-splitting hyphen at a line wrap: ASCII hyphen-minus, Unicode hyphen,
-  // non-breaking hyphen, or a soft hyphen. (En/em dashes are deliberately
-  // excluded — they are punctuation, not word breaks.)
+  // PDFium delivers the hyphen it inserts at a line break (a word split across
+  // two lines) as U+0002 — it shows up as '␂' when pasted — typically with no
+  // real '-' and no newline. A literal soft hyphen (U+00AD) is treated the
+  // same. Stripping the marker plus any whitespace/newline hugging it rejoins
+  // the word: "undis␂turbed" -> "undisturbed".
+  static final _pdfiumHyphen = RegExp(
+    r'[ \t]*[\u0002\u00AD][ \t]*(?:\r?\n)?[ \t]*',
+  );
+
+  // A word split by a *literal* visible hyphen at a line wrap: ASCII
+  // hyphen-minus, Unicode hyphen, or non-breaking hyphen. (En/em dashes are
+  // punctuation, not word breaks, so they're excluded.)
   static final _wrapHyphen = RegExp(
-    r'(\p{L})[-‐‑­][ \t]*(?:\r?\n)+[ \t]*(\p{Ll})',
+    r'(\p{L})[-‐‑][ \t]*(?:\r?\n)+[ \t]*(\p{Ll})',
     unicode: true,
   );
   static final _lineBreaks = RegExp(r'[ \t]*(?:\r?\n)+[ \t]*');
@@ -71,7 +80,11 @@ abstract final class TextNormalizer {
   ///    a single space, so the result reads as one unbroken passage.
   static String joinWrappedLines(String input) {
     if (input.isEmpty) return input;
-    final dehyphenated = input.replaceAllMapped(
+    // 1. Rejoin words split by PDFium's line-break hyphen marker (U+0002) or a
+    //    literal soft hyphen — these carry no newline, so handle them first.
+    final joined = input.replaceAll(_pdfiumHyphen, '');
+    // 2. Rejoin words split by a literal visible hyphen at a line wrap.
+    final dehyphenated = joined.replaceAllMapped(
       _wrapHyphen,
       (m) => '${m[1]}${m[2]}',
     );

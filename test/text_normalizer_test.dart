@@ -43,5 +43,21 @@ void main() {
     test('rejoins a soft-hyphen line break', () {
       expect(join('co­\noperate'), 'cooperate');
     });
+
+    test("rejoins PDFium's U+0002 line-break hyphen marker (no newline)", () {
+      // PDFium delivers the line-break hyphen as U+0002, with the word halves
+      // adjacent and no newline — the real-world case the user hit.
+      expect(join('undis\u0002turbed'), 'undisturbed');
+      expect(join('inter\u0002national waters'), 'international waters');
+    });
+
+    test('rejoins a U+0002 marker even when a newline follows it', () {
+      expect(join('undis\u0002\nturbed'), 'undisturbed');
+      expect(join('undis\u0002\r\nturbed'), 'undisturbed');
+    });
+
+    test('leaves a real hyphen mid-line intact (not a line break)', () {
+      expect(join('well-known fact'), 'well-known fact');
+    });
   });
 }
