@@ -24,7 +24,9 @@ class _HomeShellState extends State<HomeShell> {
   ];
 
   static const _pages = <Widget>[
-    LibraryScreen(),
+    // The Library has its own nested Navigator so opening a folder stays inside
+    // the tab (the sidebar remains visible) instead of covering the whole app.
+    _LibraryTab(),
     DictionaryScreen(),
     SettingsScreen(),
   ];
@@ -81,4 +83,20 @@ class _Destination {
   final String label;
   final IconData icon;
   final IconData selectedIcon;
+}
+
+/// The Library tab, hosted in its own [Navigator] so folder navigation happens
+/// within the tab — the surrounding [NavigationRail] / [NavigationBar] stays on
+/// screen. (Opening a document for reading still uses the root navigator to go
+/// full-screen.)
+class _LibraryTab extends StatelessWidget {
+  const _LibraryTab();
+
+  @override
+  Widget build(BuildContext context) {
+    return Navigator(
+      onGenerateRoute: (settings) =>
+          MaterialPageRoute(builder: (_) => const LibraryScreen()),
+    );
+  }
 }

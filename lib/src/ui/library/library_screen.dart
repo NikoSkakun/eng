@@ -26,12 +26,17 @@ Future<void> _openDoc(
   LibraryDocument doc,
 ) async {
   ref.read(libraryControllerProvider.notifier).recordOpened(doc);
+  // Reading is full-screen: push on the root navigator so the reader covers the
+  // sidebar.
   await Navigator.of(
     context,
+    rootNavigator: true,
   ).push(MaterialPageRoute(builder: (_) => ReaderScreen(document: doc)));
 }
 
 void _openFolder(BuildContext context, LibraryFolder folder) {
+  // Folder browsing stays inside the Library tab (sidebar remains visible), so
+  // this uses the nearest (nested) navigator.
   Navigator.of(
     context,
   ).push(MaterialPageRoute(builder: (_) => FolderScreen(folderId: folder.id)));

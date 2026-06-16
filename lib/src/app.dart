@@ -69,10 +69,10 @@ ThemeData _buildTheme(Brightness brightness) {
       indicatorColor: accent.withValues(alpha: 0.15),
       selectedIconTheme: IconThemeData(color: accent),
       unselectedIconTheme: IconThemeData(color: scheme.onSurfaceVariant),
-      selectedLabelTextStyle: TextStyle(
-        color: accent,
-        fontWeight: FontWeight.w600,
-      ),
+      // Selected and unselected labels must share the same metrics (only colour
+      // differs) — a heavier selected weight makes the label wider, which makes
+      // the rail resize when you switch tabs (widest on the longest label).
+      selectedLabelTextStyle: TextStyle(color: accent),
       unselectedLabelTextStyle: TextStyle(color: scheme.onSurfaceVariant),
     ),
     navigationBarTheme: NavigationBarThemeData(
