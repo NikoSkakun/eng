@@ -89,10 +89,17 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   bool _paramsHasSearcher = false;
   PdfTextSelectionParams? _textSelectionParams;
 
-  // Cache of laid-out gloss text painters (keyed by text + size); cleared when
-  // the gloss style changes. Avoids re-laying out text every paint frame.
+  // Cache of laid-out gloss text painters, keyed by text + every painter-
+  // affecting style property, so a settings change (e.g. letter spacing) yields
+  // fresh keys instead of reusing a stale painter. Avoids re-laying out text
+  // every paint frame.
+  static const int _maxGlossPainters = 1024;
   final Map<String, TextPainter> _glossPainters = {};
   String _glossStyleSig = '';
+  // Painters retired from the cache (evicted/replaced) are disposed AFTER the
+  // frame, never mid-paint: disposing one already drawn this frame blanks it.
+  final List<TextPainter> _retiredGloss = [];
+  bool _retireScheduled = false;
 
   @override
   void initState() {
@@ -126,6 +133,39 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       p.dispose();
     }
     _glossPainters.clear();
+    for (final p in _retiredGloss) {
+      p.dispose();
+    }
+    _retiredGloss.clear();
+  }
+
+  /// Queue a retired gloss painter for disposal after the current frame.
+  /// Disposing during paint would blank text already drawn this frame.
+  void _retireGloss(TextPainter tp) {
+    _retiredGloss.add(tp);
+    _scheduleGlossFlush();
+  }
+
+  /// Drop the whole cache (e.g. when the gloss style changes), disposing the
+  /// painters AFTER the frame rather than mid-paint.
+  void _retireAllGloss() {
+    if (_glossPainters.isEmpty) return;
+    _retiredGloss.addAll(_glossPainters.values);
+    _glossPainters.clear();
+    _scheduleGlossFlush();
+  }
+
+  void _scheduleGlossFlush() {
+    if (_retireScheduled) return;
+    _retireScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _retireScheduled = false;
+      if (!mounted) return; // dispose() will clean up instead
+      for (final p in _retiredGloss) {
+        p.dispose();
+      }
+      _retiredGloss.clear();
+    });
   }
 
   void _onSearchChanged() {
@@ -365,7 +405,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         '${s.inlineGlossAlignment.id}';
     if (sig != _glossStyleSig) {
       _glossStyleSig = sig;
-      _disposeGlossPainters();
+      _retireAllGloss();
     }
 
     final fill = Paint()..style = PaintingStyle.fill;
@@ -408,7 +448,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       200.0,
     );
     final key = '$text ${fontSize.toStringAsFixed(1)}';
-    var tp = _glossPainters[key];
+    // Extend the key with the painter-affecting style (letter spacing + colour;
+    // size is already in `key`) so changing those never reuses a stale painter.
+    final styleKey = '$key|${s.inlineGlossLetterSpacing}|${s.inlineGlossColor}';
+    var tp = _glossPainters[styleKey];
     if (tp == null) {
       tp = TextPainter(
         text: TextSpan(
@@ -428,13 +471,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         // page width, so the text+size cache key stays valid across pages of
         // different widths. Glosses are short, so this never actually wraps.
       )..layout(maxWidth: 3000.0);
-      // Evict the single oldest entry when over cap — never dispose the whole
-      // cache mid-paint (other painters may still be needed this frame).
-      if (_glossPainters.length >= 256) {
+      // Evict the oldest entry when over cap, but dispose it AFTER the frame —
+      // disposing a painter already drawn this frame would blank its text.
+      if (_glossPainters.length >= _maxGlossPainters) {
         final oldest = _glossPainters.keys.first;
-        _glossPainters.remove(oldest)?.dispose();
+        final removed = _glossPainters.remove(oldest);
+        if (removed != null) _retireGloss(removed);
       }
-      _glossPainters[key] = tp;
+      _glossPainters[styleKey] = tp;
     }
 
     final top = wordRect.bottom + s.inlineGlossVerticalOffset * wordRect.height;
