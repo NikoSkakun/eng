@@ -8,6 +8,7 @@ import '../data/dictionary_repository.dart';
 import '../data/library_repository.dart';
 import '../models/dictionary_entry.dart';
 import '../models/library_document.dart';
+import '../models/library_folder.dart';
 import '../text/text_normalizer.dart';
 
 /// Outcome of an export/import operation.
@@ -67,6 +68,14 @@ class BackupService {
     var entryCount = 0;
 
     if (includeLibrary) {
+      manifest['folders'] = [
+        for (final f in _library.getAllFolders())
+          {
+            'id': f.id,
+            'name': f.name,
+            'createdAt': f.createdAt.millisecondsSinceEpoch,
+          },
+      ];
       final docs = _library.getAll();
       final docList = <Map<String, Object?>>[];
       for (final d in docs) {
@@ -82,6 +91,7 @@ class BackupService {
           'lastPage': d.lastPage,
           'addedAt': d.addedAt.millisecondsSinceEpoch,
           'lastOpenedAt': d.lastOpenedAt?.millisecondsSinceEpoch,
+          'folderId': d.folderId,
           'file': archiveName,
         });
         docCount++;
@@ -164,6 +174,26 @@ class BackupService {
     var entryCount = 0;
     var skipped = 0;
     final idMap = <int, int>{}; // original doc id -> new doc id
+    final folderIdMap = <int, int>{}; // original folder id -> new folder id
+
+    if (includeLibrary && manifest['folders'] is List) {
+      for (final raw in manifest['folders'] as List) {
+        if (raw is! Map) continue;
+        final m = raw.cast<String, Object?>();
+        final name = (m['name'] as String?)?.trim();
+        // Keep every folder (even an oddly-empty name) so documents that
+        // reference it don't silently lose their folder on import.
+        final saved = _library.insertFolder(
+          LibraryFolder(
+            id: 0,
+            name: (name == null || name.isEmpty) ? 'Untitled folder' : name,
+            createdAt: _date(m['createdAt']) ?? DateTime.now(),
+          ),
+        );
+        final oldId = (m['id'] as num?)?.toInt();
+        if (oldId != null) folderIdMap[oldId] = saved.id;
+      }
+    }
 
     if (includeLibrary && manifest['documents'] is List) {
       for (final raw in manifest['documents'] as List) {
@@ -186,6 +216,7 @@ class BackupService {
         }
         await File(dest).writeAsBytes(fileBytes);
 
+        final oldFolderId = (m['folderId'] as num?)?.toInt();
         final saved = _library.insert(
           LibraryDocument(
             id: 0,
@@ -195,6 +226,7 @@ class BackupService {
             lastPage: (m['lastPage'] as num?)?.toInt() ?? 1,
             addedAt: _date(m['addedAt']) ?? DateTime.now(),
             lastOpenedAt: _date(m['lastOpenedAt']),
+            folderId: oldFolderId == null ? null : folderIdMap[oldFolderId],
           ),
         );
         final oldId = (m['id'] as num?)?.toInt();

@@ -14,6 +14,7 @@ class LibraryDocument {
     this.lastOpenedAt,
     this.lastPage = 1,
     this.viewMatrix,
+    this.folderId,
   });
 
   final int id;
@@ -40,6 +41,9 @@ class LibraryDocument {
   /// exact scroll position and zoom; null until the document has been viewed.
   final String? viewMatrix;
 
+  /// Id of the folder this document belongs to, or null for the library root.
+  final int? folderId;
+
   LibraryDocument copyWith({
     int? id,
     String? title,
@@ -50,6 +54,7 @@ class LibraryDocument {
     Object? lastOpenedAt = _sentinel,
     int? lastPage,
     Object? viewMatrix = _sentinel,
+    Object? folderId = _sentinel,
   }) {
     return LibraryDocument(
       id: id ?? this.id,
@@ -67,6 +72,7 @@ class LibraryDocument {
       viewMatrix: viewMatrix == _sentinel
           ? this.viewMatrix
           : viewMatrix as String?,
+      folderId: folderId == _sentinel ? this.folderId : folderId as int?,
     );
   }
 

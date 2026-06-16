@@ -5,6 +5,7 @@ import 'package:eng/src/data/dictionary_repository.dart';
 import 'package:eng/src/data/library_repository.dart';
 import 'package:eng/src/models/dictionary_entry.dart';
 import 'package:eng/src/models/library_document.dart';
+import 'package:eng/src/models/library_folder.dart';
 import 'package:eng/src/services/backup_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -116,6 +117,80 @@ void main() {
         (e) => e.term == 'global term',
       );
       expect(global.scopeDocumentId, isNull);
+
+      srcDb.dispose();
+      dstDb.dispose();
+    },
+  );
+
+  test(
+    'export/import round-trips folders and remaps document folderId',
+    () async {
+      final srcDb = AppDatabase.inMemory();
+      final srcLibDir = Directory(p.join(tmp.path, 'fsrc'))..createSync();
+      final srcLib = LibraryRepository(srcDb);
+      final now = DateTime.now();
+
+      final folder = srcLib.insertFolder(
+        LibraryFolder(id: 0, name: 'Aerodynamics', createdAt: now),
+      );
+      final pdf = File(p.join(srcLibDir.path, 'f.pdf'))
+        ..writeAsBytesSync(List<int>.generate(1024, (i) => i % 256));
+      final filed = srcLib.insert(
+        LibraryDocument(
+          id: 0,
+          title: 'Filed',
+          filePath: pdf.path,
+          addedAt: now,
+          folderId: folder.id,
+        ),
+      );
+      expect(filed.folderId, folder.id);
+      final loosePdf = File(p.join(srcLibDir.path, 'loose.pdf'))
+        ..writeAsBytesSync(const [1, 2, 3, 4]);
+      srcLib.insert(
+        LibraryDocument(
+          id: 0,
+          title: 'Loose',
+          filePath: loosePdf.path,
+          addedAt: now,
+        ),
+      );
+
+      final zip = p.join(tmp.path, 'folders.zip');
+      await BackupService(
+        DictionaryRepository(srcDb),
+        srcLib,
+        srcLibDir.path,
+      ).exportTo(zip, includeLibrary: true, includeDictionary: false);
+
+      // Fresh destination, pre-seeded with a placeholder folder so the imported
+      // folder gets a different id — proving folder-id remapping really happens.
+      final dstDb = AppDatabase.inMemory();
+      final dstLibDir = Directory(p.join(tmp.path, 'fdst'))..createSync();
+      final dstLib = LibraryRepository(dstDb);
+      final placeholder = dstLib.insertFolder(
+        LibraryFolder(id: 0, name: 'placeholder', createdAt: now),
+      );
+
+      await BackupService(
+        DictionaryRepository(dstDb),
+        dstLib,
+        dstLibDir.path,
+      ).importFrom(zip, includeLibrary: true, includeDictionary: false);
+
+      final importedFolder = dstLib.getAllFolders().firstWhere(
+        (f) => f.name == 'Aerodynamics',
+      );
+      expect(importedFolder.id, isNot(placeholder.id));
+      final importedFiled = dstLib.getAll().firstWhere(
+        (d) => d.title == 'Filed',
+      );
+      expect(importedFiled.folderId, importedFolder.id); // remapped
+      final importedLoose = dstLib.getAll().firstWhere(
+        (d) => d.title == 'Loose',
+      );
+      expect(importedLoose.folderId, isNull);
 
       srcDb.dispose();
       dstDb.dispose();

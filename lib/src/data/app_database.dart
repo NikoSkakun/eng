@@ -13,7 +13,7 @@ class AppDatabase {
   final Database db;
 
   /// Bump when the schema changes and add a branch in [_migrate].
-  static const int schemaVersion = 3;
+  static const int schemaVersion = 4;
 
   /// Open (creating if needed) the database at [path] and run migrations.
   factory AppDatabase.open(String path) {
@@ -37,6 +37,13 @@ class AppDatabase {
     if (version >= schemaVersion) return;
     if (version == 0) {
       db.execute('''
+        CREATE TABLE folders(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+      ''');
+      db.execute('''
         CREATE TABLE documents(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           title TEXT NOT NULL,
@@ -46,7 +53,8 @@ class AppDatabase {
           added_at INTEGER NOT NULL,
           last_opened_at INTEGER,
           last_page INTEGER NOT NULL DEFAULT 1,
-          view_matrix TEXT
+          view_matrix TEXT,
+          folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL
         );
       ''');
       db.execute('''
@@ -96,6 +104,22 @@ class AppDatabase {
       );
       db.execute('ALTER TABLE dictionary ADD COLUMN source_word TEXT;');
       version = 3;
+    }
+    if (version == 3) {
+      // v3 -> v4: group documents into folders. (IF NOT EXISTS guards against a
+      // migration that was interrupted after creating the table.)
+      db.execute('''
+        CREATE TABLE IF NOT EXISTS folders(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+      ''');
+      db.execute(
+        'ALTER TABLE documents ADD COLUMN folder_id INTEGER '
+        'REFERENCES folders(id) ON DELETE SET NULL;',
+      );
+      version = 4;
     }
     db.userVersion = schemaVersion;
   }

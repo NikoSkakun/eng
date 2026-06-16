@@ -4,25 +4,81 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
 import '../models/library_document.dart';
+import '../models/library_folder.dart';
 import 'providers.dart';
 
+/// Immutable snapshot of the library: its folders and all documents.
+class LibraryState {
+  const LibraryState({required this.folders, required this.documents});
+
+  final List<LibraryFolder> folders;
+  final List<LibraryDocument> documents;
+
+  /// Documents not filed under any folder (shown at the library root).
+  List<LibraryDocument> get rootDocuments =>
+      documents.where((d) => d.folderId == null).toList();
+
+  /// Documents filed under [folderId].
+  List<LibraryDocument> documentsIn(int folderId) =>
+      documents.where((d) => d.folderId == folderId).toList();
+
+  int countIn(int folderId) =>
+      documents.where((d) => d.folderId == folderId).length;
+}
+
 final libraryControllerProvider =
-    NotifierProvider<LibraryController, List<LibraryDocument>>(
-      LibraryController.new,
-    );
+    NotifierProvider<LibraryController, LibraryState>(LibraryController.new);
 
-class LibraryController extends Notifier<List<LibraryDocument>> {
+class LibraryController extends Notifier<LibraryState> {
   @override
-  List<LibraryDocument> build() => ref.read(libraryRepositoryProvider).getAll();
+  LibraryState build() => _read();
 
-  void _reload() => state = ref.read(libraryRepositoryProvider).getAll();
+  LibraryState _read() {
+    final repo = ref.read(libraryRepositoryProvider);
+    return LibraryState(
+      folders: repo.getAllFolders(),
+      documents: repo.getAll(),
+    );
+  }
+
+  void _reload() => state = _read();
+
+  // --- Folders ---
+
+  Future<LibraryFolder> createFolder(String name) async {
+    final folder = ref
+        .read(libraryRepositoryProvider)
+        .insertFolder(
+          LibraryFolder(id: 0, name: name.trim(), createdAt: DateTime.now()),
+        );
+    _reload();
+    return folder;
+  }
+
+  void renameFolder(LibraryFolder folder, String name) {
+    ref.read(libraryRepositoryProvider).renameFolder(folder.id, name.trim());
+    _reload();
+  }
+
+  /// Delete a folder; its documents are moved back to the library root.
+  void deleteFolder(LibraryFolder folder) {
+    ref.read(libraryRepositoryProvider).deleteFolder(folder.id);
+    _reload();
+  }
+
+  /// Move [doc] into [folderId] (or to the root when null).
+  void moveToFolder(LibraryDocument doc, int? folderId) {
+    ref.read(libraryRepositoryProvider).setDocumentFolder(doc.id, folderId);
+    _reload();
+  }
 
   /// Copy the PDF at [sourcePath] into the managed library directory and record
   /// it. The library is self-contained, so the original may be moved/deleted
-  /// afterwards.
+  /// afterwards. Pass [folderId] to file the import into a folder.
   Future<LibraryDocument> importFromPath(
     String sourcePath, {
     String? title,
+    int? folderId,
   }) async {
     final dir = ref.read(libraryDirectoryProvider);
     final baseName = p.basename(sourcePath);
@@ -45,6 +101,7 @@ class LibraryController extends Notifier<List<LibraryDocument>> {
             filePath: dest,
             originalPath: sourcePath,
             addedAt: DateTime.now(),
+            folderId: folderId,
           ),
         );
     _reload();

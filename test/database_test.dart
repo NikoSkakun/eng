@@ -3,6 +3,7 @@ import 'package:eng/src/data/dictionary_repository.dart';
 import 'package:eng/src/data/library_repository.dart';
 import 'package:eng/src/models/dictionary_entry.dart';
 import 'package:eng/src/models/library_document.dart';
+import 'package:eng/src/models/library_folder.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -127,6 +128,52 @@ void main() {
 
       repo.delete(saved.id);
       expect(repo.getAll(), isEmpty);
+    });
+
+    test('folders: CRUD and filing documents', () {
+      final repo = LibraryRepository(db);
+      final now = DateTime.now();
+      final folder = repo.insertFolder(
+        LibraryFolder(id: 0, name: 'Aerodynamics', createdAt: now),
+      );
+      expect(folder.id, greaterThan(0));
+      expect(repo.getAllFolders().single.name, 'Aerodynamics');
+
+      final doc = repo.insert(
+        LibraryDocument(
+          id: 0,
+          title: 'Paper',
+          filePath: '/tmp/p.pdf',
+          addedAt: now,
+        ),
+      );
+      expect(doc.folderId, isNull);
+
+      repo.setDocumentFolder(doc.id, folder.id);
+      expect(repo.getById(doc.id)!.folderId, folder.id);
+
+      repo.renameFolder(folder.id, 'Aero');
+      expect(repo.getAllFolders().single.name, 'Aero');
+
+      // Deleting a folder keeps its documents but moves them back to the root.
+      repo.deleteFolder(folder.id);
+      expect(repo.getAllFolders(), isEmpty);
+      final after = repo.getById(doc.id)!;
+      expect(after, isNotNull);
+      expect(after.folderId, isNull);
+    });
+
+    test('folders are ordered case-insensitively by name', () {
+      final repo = LibraryRepository(db);
+      final now = DateTime.now();
+      for (final name in ['banana', 'Apple', 'cherry']) {
+        repo.insertFolder(LibraryFolder(id: 0, name: name, createdAt: now));
+      }
+      expect(repo.getAllFolders().map((f) => f.name).toList(), [
+        'Apple',
+        'banana',
+        'cherry',
+      ]);
     });
 
     test('deleting a document cascades to its scoped dictionary entries', () {

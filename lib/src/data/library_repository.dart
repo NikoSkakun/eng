@@ -1,6 +1,7 @@
 import 'package:sqlite3/sqlite3.dart';
 
 import '../models/library_document.dart';
+import '../models/library_folder.dart';
 import 'app_database.dart';
 
 /// Persistence for the document library.
@@ -9,6 +10,51 @@ class LibraryRepository {
 
   final AppDatabase _appDb;
   Database get _db => _appDb.db;
+
+  // --- Folders ---
+
+  List<LibraryFolder> getAllFolders() {
+    final rows = _db.select(
+      'SELECT * FROM folders ORDER BY name COLLATE NOCASE;',
+    );
+    return rows.map(_folderFromRow).toList();
+  }
+
+  LibraryFolder insertFolder(LibraryFolder folder) {
+    _db.execute('INSERT INTO folders(name, created_at) VALUES(?,?);', [
+      folder.name,
+      folder.createdAt.millisecondsSinceEpoch,
+    ]);
+    return folder.copyWith(id: _db.lastInsertRowId);
+  }
+
+  void renameFolder(int id, String name) {
+    _db.execute('UPDATE folders SET name = ? WHERE id = ?;', [name, id]);
+  }
+
+  /// Delete a folder; its documents are kept and moved back to the root.
+  void deleteFolder(int id) {
+    _db.execute('UPDATE documents SET folder_id = NULL WHERE folder_id = ?;', [
+      id,
+    ]);
+    _db.execute('DELETE FROM folders WHERE id = ?;', [id]);
+  }
+
+  /// Move a document into [folderId] (or to the root when null).
+  void setDocumentFolder(int docId, int? folderId) {
+    _db.execute('UPDATE documents SET folder_id = ? WHERE id = ?;', [
+      folderId,
+      docId,
+    ]);
+  }
+
+  LibraryFolder _folderFromRow(Row row) => LibraryFolder(
+    id: row['id'] as int,
+    name: row['name'] as String,
+    createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
+  );
+
+  // --- Documents ---
 
   List<LibraryDocument> getAll() {
     final rows = _db.select(
@@ -28,8 +74,8 @@ class LibraryRepository {
   LibraryDocument insert(LibraryDocument doc) {
     _db.execute(
       '''
-      INSERT INTO documents(title, file_path, original_path, page_count, added_at, last_opened_at, last_page, view_matrix)
-      VALUES(?,?,?,?,?,?,?,?);
+      INSERT INTO documents(title, file_path, original_path, page_count, added_at, last_opened_at, last_page, view_matrix, folder_id)
+      VALUES(?,?,?,?,?,?,?,?,?);
       ''',
       [
         doc.title,
@@ -40,6 +86,7 @@ class LibraryRepository {
         doc.lastOpenedAt?.millisecondsSinceEpoch,
         doc.lastPage,
         doc.viewMatrix,
+        doc.folderId,
       ],
     );
     return doc.copyWith(id: _db.lastInsertRowId);
@@ -50,7 +97,7 @@ class LibraryRepository {
       '''
       UPDATE documents SET
         title = ?, file_path = ?, original_path = ?, page_count = ?,
-        last_opened_at = ?, last_page = ?, view_matrix = ?
+        last_opened_at = ?, last_page = ?, view_matrix = ?, folder_id = ?
       WHERE id = ?;
       ''',
       [
@@ -61,6 +108,7 @@ class LibraryRepository {
         doc.lastOpenedAt?.millisecondsSinceEpoch,
         doc.lastPage,
         doc.viewMatrix,
+        doc.folderId,
         doc.id,
       ],
     );
@@ -84,6 +132,7 @@ class LibraryRepository {
           : DateTime.fromMillisecondsSinceEpoch(lastOpened),
       lastPage: row['last_page'] as int,
       viewMatrix: row['view_matrix'] as String?,
+      folderId: row['folder_id'] as int?,
     );
   }
 }
