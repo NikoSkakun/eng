@@ -1,12 +1,19 @@
-# eng — foreign-language PDF reader
+# eng — foreign-language book & document reader
 
-Read PDFs in a language you're learning. Select an unknown word or phrase, give
-it a translation/definition, and the app **auto-highlights every occurrence** of
-that term — across the whole document and, by default, across your entire
-library. Hover (desktop) or tap (mobile) a highlight to see its
+Read books and documents in a language you're learning. Select an unknown word
+or phrase, give it a translation/definition, and the app **auto-highlights every
+occurrence** of that term — across the whole document and, by default, across
+your entire library. Hover (desktop) or tap (mobile) a highlight to see its
 translation/definition in a popup. When you add a new word, the app **suggests a
 translation** from free online sources, but always leaves room for your own
 wording.
+
+**Supported formats:** PDF (fixed layout) plus the common reflowable book and
+text formats — **EPUB, MOBI/AZW/PRC, FB2, TXT, HTML, Markdown and RTF**. PDFs
+open in the page-faithful pdfrx reader; every other format opens in a flowing
+text reader with the same highlighting, glosses, popups, selection-to-add and
+find. (MOBI books using legacy HUFF/CDIC compression are not yet supported —
+convert them to EPUB.)
 
 Built with Flutter; first-class targets are **Linux (Ubuntu)** and **iOS**
 (macOS desktop is also enabled for convenience).
@@ -16,8 +23,8 @@ Built with Flutter; first-class targets are **Linux (Ubuntu)** and **iOS**
 
 ## Features
 
-- 📚 **Library** — import PDFs (copied into an app-managed folder), reopen at
-  your last page.
+- 📚 **Library** — import PDFs and books (EPUB, MOBI, FB2, TXT, HTML, Markdown,
+  RTF), copied into an app-managed folder; reopen at your last position.
 - ✍️ **Add terms while reading** — select a word/phrase → a sheet opens with an
   auto-suggested translation and an optional dictionary definition; edit freely.
 - 🖍️ **Automatic highlighting** — saved terms are matched on **whole words /

@@ -4,17 +4,36 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../models/document_format.dart';
 import '../../models/library_document.dart';
 import '../../models/library_folder.dart';
 import '../../state/library_controller.dart';
 import '../reader/reader_screen.dart';
+import '../reader/text_reader_screen.dart';
 
-const XTypeGroup _pdfTypeGroup = XTypeGroup(
-  label: 'PDF',
-  extensions: ['pdf'],
-  mimeTypes: ['application/pdf'],
-  uniformTypeIdentifiers: ['com.adobe.pdf'],
+const XTypeGroup _docTypeGroup = XTypeGroup(
+  label: 'Documents & books',
+  extensions: kSupportedImportExtensions,
 );
+
+/// The icon shown for a document of the given [format] in the library list.
+IconData _iconForFormat(DocumentFormat format) {
+  switch (format) {
+    case DocumentFormat.pdf:
+      return Icons.picture_as_pdf_outlined;
+    case DocumentFormat.epub:
+    case DocumentFormat.mobi:
+    case DocumentFormat.fb2:
+      return Icons.auto_stories_outlined;
+    case DocumentFormat.html:
+    case DocumentFormat.markdown:
+      return Icons.article_outlined;
+    case DocumentFormat.txt:
+    case DocumentFormat.rtf:
+    case DocumentFormat.unknown:
+      return Icons.description_outlined;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Shared item operations
@@ -27,11 +46,15 @@ Future<void> _openDoc(
 ) async {
   ref.read(libraryControllerProvider.notifier).recordOpened(doc);
   // Reading is full-screen: push on the root navigator so the reader covers the
-  // sidebar.
-  await Navigator.of(
-    context,
-    rootNavigator: true,
-  ).push(MaterialPageRoute(builder: (_) => ReaderScreen(document: doc)));
+  // sidebar. PDFs use the fixed-layout pdfrx reader; every other format uses
+  // the reflowable text reader.
+  await Navigator.of(context, rootNavigator: true).push(
+    MaterialPageRoute(
+      builder: (_) => doc.format.isReflowable
+          ? TextReaderScreen(document: doc)
+          : ReaderScreen(document: doc),
+    ),
+  );
 }
 
 void _openFolder(BuildContext context, LibraryFolder folder) {
@@ -152,7 +175,7 @@ Future<LibraryDocument?> _pickAndImport(
   WidgetRef ref, {
   int? folderId,
 }) async {
-  final file = await openFile(acceptedTypeGroups: const [_pdfTypeGroup]);
+  final file = await openFile(acceptedTypeGroups: const [_docTypeGroup]);
   if (file == null) return null;
   try {
     return await ref
@@ -186,12 +209,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   Future<void> _onDrop(List<DropItem> items) async {
     setState(() => _dragging = false);
     if (_importing) return;
-    final pdfs = items
-        .where((e) => e.path.toLowerCase().endsWith('.pdf'))
-        .toList();
-    if (pdfs.isEmpty) {
+    final files = items.where((e) => isSupportedImportPath(e.path)).toList();
+    if (files.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Only PDF files can be added.')),
+        const SnackBar(content: Text('That file type is not supported.')),
       );
       return;
     }
@@ -200,7 +221,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     var imported = 0;
     LibraryDocument? last;
     try {
-      for (final f in pdfs) {
+      for (final f in files) {
         last = await notifier.importFromPath(f.path);
         imported++;
       }
@@ -219,7 +240,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     } else if (imported > 1) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Imported $imported PDFs.')));
+      ).showSnackBar(SnackBar(content: Text('Imported $imported documents.')));
     }
   }
 
@@ -257,7 +278,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         heroTag: 'libraryImportFab',
         onPressed: _importing ? null : _import,
         icon: const Icon(Icons.add),
-        label: const Text('Import PDF'),
+        label: const Text('Import'),
       ),
       body: DropTarget(
         onDragEntered: (_) => setState(() => _dragging = true),
@@ -305,14 +326,12 @@ class _FolderScreenState extends ConsumerState<FolderScreen> {
   Future<void> _onDrop(List<DropItem> items) async {
     setState(() => _dragging = false);
     if (_importing) return;
-    final pdfs = items
-        .where((e) => e.path.toLowerCase().endsWith('.pdf'))
-        .toList();
-    if (pdfs.isEmpty) return;
+    final files = items.where((e) => isSupportedImportPath(e.path)).toList();
+    if (files.isEmpty) return;
     setState(() => _importing = true);
     final notifier = ref.read(libraryControllerProvider.notifier);
     try {
-      for (final f in pdfs) {
+      for (final f in files) {
         await notifier.importFromPath(f.path, folderId: widget.folderId);
       }
     } finally {
@@ -366,7 +385,7 @@ class _FolderScreenState extends ConsumerState<FolderScreen> {
         heroTag: 'folderImportFab',
         onPressed: _importing ? null : _import,
         icon: const Icon(Icons.add),
-        label: const Text('Import PDF'),
+        label: const Text('Import'),
       ),
       body: DropTarget(
         onDragEntered: (_) => setState(() => _dragging = true),
@@ -381,7 +400,7 @@ class _FolderScreenState extends ConsumerState<FolderScreen> {
                       child: Padding(
                         padding: EdgeInsets.all(32),
                         child: Text(
-                          'This folder is empty.\nImport a PDF, drag items in, or '
+                          'This folder is empty.\nImport a document, drag items in, or '
                           'use “Move to folder…”.',
                           textAlign: TextAlign.center,
                         ),
@@ -490,7 +509,7 @@ class _ItemRow extends ConsumerWidget {
 
     final leading = isFolder
         ? Icon(Icons.folder, color: theme.colorScheme.primary)
-        : const Icon(Icons.picture_as_pdf_outlined);
+        : Icon(_iconForFormat(item.document!.format));
 
     final String? subtitle;
     if (isFolder) {
@@ -690,7 +709,7 @@ class _DropOverlay extends StatelessWidget {
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    'Drop PDF files to add them',
+                    'Drop files to add them',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       color: scheme.primary,
                       fontWeight: FontWeight.w600,
@@ -728,7 +747,7 @@ class _EmptyLibrary extends StatelessWidget {
             Text('Your library is empty', style: theme.textTheme.titleLarge),
             const SizedBox(height: 8),
             Text(
-              'Import a PDF — or drag one in from your file manager — to start '
+              'Import a document — PDF, EPUB, MOBI, FB2, TXT and more — or drag one in '
               'reading. Use the folder button to group documents; drag items by '
               'the handle to reorder them or drop them onto a folder.',
               textAlign: TextAlign.center,
@@ -738,7 +757,7 @@ class _EmptyLibrary extends StatelessWidget {
             FilledButton.icon(
               onPressed: onImport,
               icon: const Icon(Icons.add),
-              label: const Text('Import PDF'),
+              label: const Text('Import'),
             ),
           ],
         ),

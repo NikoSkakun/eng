@@ -1,4 +1,7 @@
-/// A PDF stored in the app's library.
+import 'document_format.dart';
+
+/// A document stored in the app's library (a PDF or a reflowable book such as
+/// EPUB, MOBI, FB2, TXT, HTML, Markdown or RTF).
 ///
 /// The file itself is copied into the app's documents directory on import so
 /// the library is self-contained (and keeps working if the original file is
@@ -47,6 +50,9 @@ class LibraryDocument {
 
   /// Order of this document among the items of its folder (or the root).
   final int position;
+
+  /// The document's format, derived from its file extension.
+  DocumentFormat get format => documentFormatForPath(filePath);
 
   LibraryDocument copyWith({
     int? id,
