@@ -257,7 +257,20 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
             updatedAt: now,
           );
 
-    await ref.read(dictionaryControllerProvider.notifier).save(entry);
+    final saved = await ref.read(dictionaryControllerProvider.notifier).save(entry);
+    // (Re)build this term's cross-library usage cache when its matching changed
+    // — a new term, an edited surface form, or toggled sub-word matching. The
+    // current document is scanned first, then the rest of the library in the
+    // background, so opening the word's contexts later is instant.
+    final matchChanged = base == null ||
+        base.term != saved.term ||
+        base.matchPartial != saved.matchPartial;
+    if (matchChanged) {
+      ref.read(usageIndexerProvider).reindexEntry(
+            saved,
+            priorityDocId: widget.documentId == 0 ? null : widget.documentId,
+          );
+    }
     if (mounted) Navigator.of(context).pop(true);
   }
 

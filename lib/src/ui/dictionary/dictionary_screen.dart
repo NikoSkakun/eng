@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../models/dictionary_entry.dart';
 import '../../state/dictionary_controller.dart';
 import '../reader/add_entry_sheet.dart';
+import 'word_contexts_screen.dart';
 
 class DictionaryScreen extends ConsumerStatefulWidget {
   const DictionaryScreen({super.key});
@@ -25,6 +26,12 @@ class _DictionaryScreenState extends ConsumerState<DictionaryScreen> {
 
   Future<void> _addManual() async {
     await AddEntrySheet.show(context, documentId: 0);
+  }
+
+  void _showContexts(DictionaryEntry entry) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => WordContextsScreen(entry: entry)),
+    );
   }
 
   Future<void> _delete(DictionaryEntry entry) async {
@@ -98,6 +105,7 @@ class _DictionaryScreenState extends ConsumerState<DictionaryScreen> {
                   entry: entries[i],
                   onTap: () => _edit(entries[i]),
                   onDelete: () => _delete(entries[i]),
+                  onShowContexts: () => _showContexts(entries[i]),
                   onToggleHighlight: () => ref
                       .read(dictionaryControllerProvider.notifier)
                       .toggleHighlight(entries[i]),
@@ -115,12 +123,14 @@ class _EntryTile extends StatelessWidget {
     required this.entry,
     required this.onTap,
     required this.onDelete,
+    required this.onShowContexts,
     required this.onToggleHighlight,
   });
 
   final DictionaryEntry entry;
   final VoidCallback onTap;
   final VoidCallback onDelete;
+  final VoidCallback onShowContexts;
   final VoidCallback onToggleHighlight;
 
   @override
@@ -153,10 +163,20 @@ class _EntryTile extends StatelessWidget {
         ),
         onPressed: onToggleHighlight,
       ),
-      trailing: IconButton(
-        tooltip: 'Delete',
-        icon: const Icon(Icons.delete_outline),
-        onPressed: onDelete,
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: 'Contexts across your library',
+            icon: const Icon(Icons.format_quote),
+            onPressed: onShowContexts,
+          ),
+          IconButton(
+            tooltip: 'Delete',
+            icon: const Icon(Icons.delete_outline),
+            onPressed: onDelete,
+          ),
+        ],
       ),
     );
   }

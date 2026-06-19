@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -21,9 +22,13 @@ import 'translation_popup.dart';
 /// per-page overlay, shows a translation popup on hover (desktop) or tap
 /// (mobile), and lets the reader add a new term from a text selection.
 class ReaderScreen extends ConsumerStatefulWidget {
-  const ReaderScreen({super.key, required this.document});
+  const ReaderScreen({super.key, required this.document, this.initialPage});
 
   final LibraryDocument document;
+
+  /// If set, open at this 1-based page instead of the saved view — used when
+  /// jumping to a usage from the Dictionary.
+  final int? initialPage;
 
   @override
   ConsumerState<ReaderScreen> createState() => _ReaderScreenState();
@@ -725,6 +730,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
   /// Restore the exact saved view (scroll + zoom); fall back to the last page.
   void _restoreView(PdfViewerController controller, int pageCount) {
+    final jump = widget.initialPage;
+    if (jump != null && jump >= 1 && jump <= pageCount) {
+      controller.goToPage(pageNumber: jump);
+      return;
+    }
     final saved = widget.document.viewMatrix;
     final matrix = saved == null ? null : _parseMatrix(saved);
     if (matrix != null) {
@@ -769,6 +779,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     PdfDocument document,
     PdfViewerController controller,
   ) {
+    final jump = widget.initialPage;
+    if (jump != null && jump >= 1 && jump <= document.pages.length) return jump;
     final last = widget.document.lastPage;
     return (last > 1 && last <= document.pages.length) ? last : null;
   }
@@ -809,6 +821,49 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       onGeneralTap: _onGeneralTap,
       onViewerReady: _onViewerReady,
       calculateInitialPageNumber: _calculateInitialPageNumber,
+      errorBannerBuilder: _buildErrorBanner,
+    );
+  }
+
+  /// Friendly replacement for pdfrx's raw exception banner when a document fails
+  /// to load — most often because its file is no longer in the library folder
+  /// (moved/deleted), which surfaces as `FPDF_ERR_FILE`.
+  Widget _buildErrorBanner(
+    BuildContext context,
+    Object error,
+    StackTrace? stackTrace,
+    PdfDocumentRef documentRef,
+  ) {
+    final theme = Theme.of(context);
+    final missing = !File(widget.document.filePath).existsSync();
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              missing ? Icons.find_in_page_outlined : Icons.error_outline,
+              size: 56,
+              color: theme.colorScheme.error,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              missing ? 'This file is missing' : 'Couldn’t open this document',
+              style: theme.textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              missing
+                  ? 'Its file is no longer in the library folder — it may have '
+                        'been moved or deleted. Re-import it to read it again.'
+                  : 'The file may be corrupted or not a valid PDF.',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium,
+            ),
+          ],
+        ),
+      ),
     );
   }
 
