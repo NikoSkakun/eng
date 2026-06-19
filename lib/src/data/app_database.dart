@@ -13,7 +13,7 @@ class AppDatabase {
   final Database db;
 
   /// Bump when the schema changes and add a branch in [_migrate].
-  static const int schemaVersion = 5;
+  static const int schemaVersion = 7;
 
   /// Open (creating if needed) the database at [path] and run migrations.
   factory AppDatabase.open(String path) {
@@ -92,6 +92,7 @@ class AppDatabase {
           created_at INTEGER NOT NULL
         );
       ''');
+      _createUsageTables(db);
       // Fresh install already includes every column up to the latest version.
       version = schemaVersion;
     }
@@ -138,7 +139,52 @@ class AppDatabase {
       );
       version = 5;
     }
+    if (version == 5) {
+      // v5 -> v6: cross-library "usages" cache — occurrence pointers per term,
+      // filled in the background so opening a word's contexts is instant.
+      _createUsageTables(db);
+      version = 6;
+    }
+    if (version == 6) {
+      // v6 -> v7: the first usage indexer discarded a whole PDF's results when a
+      // single page failed to extract, so a large book showed no usages for any
+      // word. Clear the cache so it rebuilds with the now per-page-resilient
+      // extractor.
+      db.execute('DELETE FROM usages;');
+      db.execute('DELETE FROM usage_index;');
+      version = 7;
+    }
     db.userVersion = schemaVersion;
+  }
+
+  /// Cache of where each dictionary term occurs across the library. [usages]
+  /// holds one display-ready snippet per occurrence (with a jump pointer —
+  /// [page] for PDFs, [block_index] for reflowable books); [usage_index] records
+  /// which (term, document) pairs have been scanned (even when they had no
+  /// hits), so indexing is resumable and never redoes work. Both cascade-delete
+  /// with their dictionary entry / document.
+  static void _createUsageTables(Database db) {
+    db.execute('''
+      CREATE TABLE IF NOT EXISTS usages(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entry_id INTEGER NOT NULL REFERENCES dictionary(id) ON DELETE CASCADE,
+        document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+        page INTEGER,
+        block_index INTEGER,
+        snippet TEXT NOT NULL,
+        hl_ranges TEXT NOT NULL,
+        ord INTEGER NOT NULL DEFAULT 0
+      );
+    ''');
+    db.execute('CREATE INDEX IF NOT EXISTS idx_usages_entry ON usages(entry_id);');
+    db.execute('CREATE INDEX IF NOT EXISTS idx_usages_doc ON usages(document_id);');
+    db.execute('''
+      CREATE TABLE IF NOT EXISTS usage_index(
+        entry_id INTEGER NOT NULL REFERENCES dictionary(id) ON DELETE CASCADE,
+        document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+        PRIMARY KEY(entry_id, document_id)
+      );
+    ''');
   }
 
   void dispose() => db.close();

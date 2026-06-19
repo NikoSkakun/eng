@@ -245,6 +245,9 @@ class LibraryController extends Notifier<LibraryState> {
           ),
         );
     _reload();
+    // Scan the new document for every existing term in the background, so their
+    // cached usages include it without waiting until it's first opened.
+    ref.read(usageIndexerProvider).indexNewDocument(saved.id);
     return saved;
   }
 

@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+// SelectedContent lives in the rendering library (used by SelectionArea's
+// onSelectionChanged) and is not re-exported through material/widgets.
+import 'package:flutter/rendering.dart' show SelectedContent;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -24,9 +27,17 @@ import 'translation_popup.dart';
 /// inline glosses, text-selection "add", find, and reading-position memory as
 /// the PDF reader.
 class TextReaderScreen extends ConsumerStatefulWidget {
-  const TextReaderScreen({super.key, required this.document});
+  const TextReaderScreen({
+    super.key,
+    required this.document,
+    this.initialBlockIndex,
+  });
 
   final LibraryDocument document;
+
+  /// If set, open scrolled to this paragraph block instead of the saved scroll
+  /// position — used when jumping to a usage from the Dictionary.
+  final int? initialBlockIndex;
 
   @override
   ConsumerState<TextReaderScreen> createState() => _TextReaderScreenState();
@@ -99,10 +110,12 @@ class _TextReaderScreenState extends ConsumerState<TextReaderScreen> {
           .updatePageCount(widget.document, pages);
       WidgetsBinding.instance.addPostFrameCallback((_) => _restoreScroll());
     } catch (e) {
-      if (mounted) setState(() {
-        _loading = false;
-        _loadError = e;
-      });
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadError = e;
+        });
+      }
     }
   }
 
@@ -118,6 +131,11 @@ class _TextReaderScreenState extends ConsumerState<TextReaderScreen> {
   }
 
   void _restoreScroll() {
+    final jump = widget.initialBlockIndex;
+    if (jump != null && jump >= 0 && jump < _cumChars.length) {
+      _jumpToBlock(jump, animate: false);
+      return;
+    }
     final saved = widget.document.viewMatrix;
     final offset = saved == null ? null : double.tryParse(saved);
     if (offset != null && _scrollController.hasClients) {
@@ -277,15 +295,20 @@ class _TextReaderScreenState extends ConsumerState<TextReaderScreen> {
     _jumpToBlock(_searchHits[_searchIndex]);
   }
 
-  void _jumpToBlock(int blockIndex) {
+  void _jumpToBlock(int blockIndex, {bool animate = true}) {
     if (!_scrollController.hasClients) return;
     final frac = _cumChars[blockIndex] / _totalChars;
     final max = _scrollController.position.maxScrollExtent;
-    _scrollController.animateTo(
-      (frac * max).clamp(0.0, max),
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeInOut,
-    );
+    final target = (frac * max).clamp(0.0, max);
+    if (animate) {
+      _scrollController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+    } else {
+      _scrollController.jumpTo(target);
+    }
   }
 
   // --- Build -----------------------------------------------------------------
