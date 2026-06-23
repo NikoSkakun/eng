@@ -151,7 +151,9 @@ class WordContextsService {
           final pageText = await src.loadStructuredText();
           // Join wrapped lines so each page reads as continuous prose; we then
           // window around each match rather than showing a whole page.
-          final text = TextNormalizer.joinWrappedLines(pageText.fullText).trim();
+          final text = TextNormalizer.joinWrappedLines(
+            pageText.fullText,
+          ).trim();
           if (text.isEmpty) continue;
           out.add(_Passage(text, isParagraph: false, page: src.pageNumber));
         } catch (_) {

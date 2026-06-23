@@ -28,8 +28,12 @@ class TranslationService {
   /// How long a "no definition found" result is cached before re-checking.
   static const int _negativeDefinitionTtlMs = 24 * 60 * 60 * 1000; // 1 day
 
-  TranslationProvider _primaryTranslationProvider() {
-    switch (settings.translationProvider) {
+  TranslationProvider _primaryTranslationProvider() =>
+      _buildTranslationProvider(settings.translationProvider);
+
+  /// Construct the provider for [id] using the current settings (keys/URLs).
+  TranslationProvider _buildTranslationProvider(TranslationProviderId id) {
+    switch (id) {
       case TranslationProviderId.myMemory:
         return MyMemoryProvider(_client, email: settings.myMemoryEmail);
       case TranslationProviderId.libreTranslate:
@@ -98,6 +102,33 @@ class TranslationService {
       }
     }
     throw lastError ?? const ProviderException('Translation failed.');
+  }
+
+  /// Translate [text] with a single, specific provider and **no fallback**, so
+  /// the caller can be certain which engine produced the result (e.g. to show a
+  /// DeepL-only "translation in context"). Results are cached under the same
+  /// provider-namespaced scheme as [suggestTranslation], so a word translated by
+  /// the primary path and the same text translated here share cache entries.
+  ///
+  /// Throws [ProviderException] if that one provider fails.
+  Future<TranslationResult> translateWith(
+    TranslationProviderId providerId,
+    String text, {
+    String? from,
+    String? to,
+  }) async {
+    final src = from ?? settings.learningLang;
+    final dst = to ?? settings.nativeLang;
+    final trimmed = text.trim();
+    final cacheKey = 'tr:${providerId.id}:$src>$dst:${trimmed.toLowerCase()}';
+    final cached = _readCache(cacheKey);
+    if (cached != null) return TranslationResult.fromJson(cached);
+
+    final result = await _buildTranslationProvider(
+      providerId,
+    ).translate(text: trimmed, from: src, to: dst);
+    _cache.put(cacheKey, jsonEncode(result.toJson()));
+    return result;
   }
 
   /// Look up a definition for [word]. Returns null if no provider finds one (or

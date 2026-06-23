@@ -22,15 +22,17 @@ BookContent parseEpub(Uint8List bytes) {
   }
 
   String? read(String name) {
-    final f = archive.findFile(name) ??
-        archive.findFile(_stripLeadingSlash(name));
+    final f =
+        archive.findFile(name) ?? archive.findFile(_stripLeadingSlash(name));
     final b = f?.readBytes();
     return b == null ? null : decodeBytes(Uint8List.fromList(b));
   }
 
   final containerXml = read('META-INF/container.xml');
   if (containerXml == null) {
-    throw const BookFormatException('Not a valid EPUB (missing container.xml).');
+    throw const BookFormatException(
+      'Not a valid EPUB (missing container.xml).',
+    );
   }
   final opfPath = _firstAttr(
     XmlDocument.parse(containerXml),

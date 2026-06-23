@@ -45,7 +45,9 @@ BookContent _loadBookEntry(_BookRequest req) {
     case DocumentFormat.html:
       final blocks = htmlToBlocks(decodeBytes(bytes));
       if (blocks.isEmpty) {
-        throw const BookFormatException('This file contained no readable text.');
+        throw const BookFormatException(
+          'This file contained no readable text.',
+        );
       }
       return BookContent(blocks: blocks);
     case DocumentFormat.markdown:
@@ -64,7 +66,10 @@ BookContent _loadBookEntry(_BookRequest req) {
 final RegExp _mdHeading = RegExp(r'^(#{1,6})\s+(.*)$');
 
 BookContent _parseMarkdown(String text) {
-  final lines = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n').split('\n');
+  final lines = text
+      .replaceAll('\r\n', '\n')
+      .replaceAll('\r', '\n')
+      .split('\n');
   final blocks = <BookBlock>[];
   final buf = StringBuffer();
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/settings_store.dart';
 import '../../models/dictionary_entry.dart';
 import '../../services/translation/translation_models.dart';
 import '../../state/dictionary_controller.dart';
@@ -18,6 +19,7 @@ class AddEntrySheet extends ConsumerStatefulWidget {
     required this.documentId,
     this.initialTerm = '',
     this.initialSourceWord,
+    this.contextPassage,
     this.existing,
   });
 
@@ -27,6 +29,12 @@ class AddEntrySheet extends ConsumerStatefulWidget {
   /// The longer word [initialTerm] was selected from, when it was a partial
   /// in-word selection. Defaults the new entry to sub-word matching.
   final String? initialSourceWord;
+
+  /// The paragraph/passage the selection came from, when opened from a reader.
+  /// When DeepL is the active provider, the sheet shows this passage and its
+  /// DeepL translation so the term can be seen in its specific context.
+  final String? contextPassage;
+
   final DictionaryEntry? existing;
 
   /// Show the sheet; resolves to true if an entry was saved.
@@ -35,6 +43,7 @@ class AddEntrySheet extends ConsumerStatefulWidget {
     required int documentId,
     String initialTerm = '',
     String? initialSourceWord,
+    String? contextPassage,
     DictionaryEntry? existing,
   }) {
     return showModalBottomSheet<bool>(
@@ -49,6 +58,7 @@ class AddEntrySheet extends ConsumerStatefulWidget {
           documentId: documentId,
           initialTerm: initialTerm,
           initialSourceWord: initialSourceWord,
+          contextPassage: contextPassage,
           existing: existing,
         ),
       ),
@@ -77,6 +87,15 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
   String? _definitionError;
   String? _phonetic;
 
+  /// Id of the provider that produced the current translation suggestion, used
+  /// to mark the field as coming from DeepL.
+  String? _suggestionProviderId;
+
+  // In-context (paragraph) translation by DeepL.
+  bool _loadingContext = false;
+  String? _contextTranslation;
+  String? _contextError;
+
   @override
   void initState() {
     super.initState();
@@ -93,14 +112,20 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
     // multi-word terms.
     _term.addListener(_onTermChanged);
 
-    // Auto-suggest only for brand-new entries when enabled.
-    if (e == null && _term.text.isNotEmpty) {
-      final settings = ref.read(settingsControllerProvider);
-      if (settings.autoSuggestEnabled) {
-        WidgetsBinding.instance.addPostFrameCallback((_) => _fetchSuggestion());
-      }
+    final settings = ref.read(settingsControllerProvider);
+    if (settings.autoSuggestEnabled) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        // Auto-suggest a translation only for brand-new entries (don't clobber a
+        // saved one when editing).
+        if (e == null && _term.text.isNotEmpty) _fetchSuggestion();
+        // Translate the surrounding passage with DeepL whenever we have one and
+        // DeepL is active — useful when adding and when editing from a selection.
+        if (settings.deepLEnabled && _hasContext) _fetchContextTranslation();
+      });
     }
   }
+
+  bool get _hasContext => widget.contextPassage?.trim().isNotEmpty ?? false;
 
   @override
   void dispose() {
@@ -138,6 +163,7 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
       ].where((s) => s.trim().isNotEmpty).toList();
       setState(() {
         _suggestions = all;
+        _suggestionProviderId = result.providerId;
         if (_translation.text.trim().isEmpty && all.isNotEmpty) {
           _translation.text = all.first;
         }
@@ -148,6 +174,31 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
       if (mounted) setState(() => _suggestionError = '$e');
     } finally {
       if (mounted) setState(() => _loadingSuggestion = false);
+    }
+  }
+
+  /// Translate the surrounding passage with DeepL (no fallback) so the user can
+  /// read the term in its specific context. The result is shown read-only — it
+  /// is never written into the saved entry.
+  Future<void> _fetchContextTranslation() async {
+    final passage = widget.contextPassage?.trim() ?? '';
+    if (passage.isEmpty || !mounted) return;
+    setState(() {
+      _loadingContext = true;
+      _contextError = null;
+    });
+    try {
+      final result = await ref
+          .read(translationServiceProvider)
+          .translateWith(TranslationProviderId.deepL, passage);
+      if (!mounted) return;
+      setState(() => _contextTranslation = result.translatedText);
+    } on ProviderException catch (e) {
+      if (mounted) setState(() => _contextError = e.message);
+    } catch (e) {
+      if (mounted) setState(() => _contextError = '$e');
+    } finally {
+      if (mounted) setState(() => _loadingContext = false);
     }
   }
 
@@ -257,21 +308,161 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
             updatedAt: now,
           );
 
-    final saved = await ref.read(dictionaryControllerProvider.notifier).save(entry);
+    final saved = await ref
+        .read(dictionaryControllerProvider.notifier)
+        .save(entry);
     // (Re)build this term's cross-library usage cache when its matching changed
     // — a new term, an edited surface form, or toggled sub-word matching. The
     // current document is scanned first, then the rest of the library in the
     // background, so opening the word's contexts later is instant.
-    final matchChanged = base == null ||
+    final matchChanged =
+        base == null ||
         base.term != saved.term ||
         base.matchPartial != saved.matchPartial;
     if (matchChanged) {
-      ref.read(usageIndexerProvider).reindexEntry(
+      ref
+          .read(usageIndexerProvider)
+          .reindexEntry(
             saved,
             priorityDocId: widget.documentId == 0 ? null : widget.documentId,
           );
     }
     if (mounted) Navigator.of(context).pop(true);
+  }
+
+  /// The selection's surrounding paragraph (duplicated read-only) above its
+  /// DeepL translation, so the term can be understood in its specific context.
+  Widget _buildContextSection(ThemeData theme) {
+    final passage = widget.contextPassage!.trim();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(
+              Icons.format_quote_outlined,
+              size: 18,
+              color: theme.colorScheme.outline,
+            ),
+            const SizedBox(width: 6),
+            Text('In context', style: theme.textTheme.titleSmall),
+            const Spacer(),
+            IconButton(
+              tooltip: 'Re-translate this passage',
+              visualDensity: VisualDensity.compact,
+              onPressed: _loadingContext ? null : _fetchContextTranslation,
+              icon: _loadingContext
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.translate, size: 18),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        _buildPassageBox(
+          theme,
+          label: 'Original paragraph',
+          child: _passageRichText(theme, passage),
+        ),
+        const SizedBox(height: 8),
+        _buildPassageBox(
+          theme,
+          label: 'Paragraph translation',
+          badge: const _DeepLBadge(),
+          child: _buildContextTranslationBody(theme),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildContextTranslationBody(ThemeData theme) {
+    if (_contextError != null) {
+      return Text(
+        _contextError!,
+        style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
+      );
+    }
+    final translation = _contextTranslation;
+    if (translation == null || translation.isEmpty) {
+      return Text(
+        _loadingContext ? 'Translating…' : 'No translation yet.',
+        style: theme.textTheme.bodyMedium?.copyWith(
+          color: theme.colorScheme.outline,
+        ),
+      );
+    }
+    return SelectableText(translation, style: theme.textTheme.bodyMedium);
+  }
+
+  /// A labelled, bordered, scrollable box for a passage of text.
+  Widget _buildPassageBox(
+    ThemeData theme, {
+    required String label,
+    Widget? badge,
+    required Widget child,
+  }) {
+    final scheme = theme.colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              label,
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            if (badge != null) ...[const SizedBox(width: 6), badge],
+          ],
+        ),
+        const SizedBox(height: 4),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: scheme.outlineVariant),
+          ),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 120),
+            child: SingleChildScrollView(child: child),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// The original passage with the selected term emphasised in place.
+  Widget _passageRichText(ThemeData theme, String passage) {
+    final base = theme.textTheme.bodyMedium ?? const TextStyle();
+    final term = _term.text.trim();
+    final idx = term.isEmpty
+        ? -1
+        : passage.toLowerCase().indexOf(term.toLowerCase());
+    if (idx < 0) {
+      return SelectableText(passage, style: base);
+    }
+    final end = idx + term.length;
+    final highlight = base.copyWith(
+      fontWeight: FontWeight.w700,
+      color: theme.colorScheme.primary,
+      backgroundColor: theme.colorScheme.primary.withValues(alpha: 0.12),
+    );
+    return SelectableText.rich(
+      TextSpan(
+        style: base,
+        children: [
+          if (idx > 0) TextSpan(text: passage.substring(0, idx)),
+          TextSpan(text: passage.substring(idx, end), style: highlight),
+          if (end < passage.length) TextSpan(text: passage.substring(end)),
+        ],
+      ),
+    );
   }
 
   @override
@@ -282,6 +473,11 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
     final src = languageForCode(settings.learningLang);
     final dst = languageForCode(settings.nativeLang);
     final definitionsAvailable = settings.definitionsAvailable;
+    // DeepL-specific affordances: mark the suggested translation, and show the
+    // selection's surrounding passage with its DeepL translation.
+    final showWordDeepL =
+        settings.deepLEnabled && _suggestionProviderId == 'deepl';
+    final showContext = settings.deepLEnabled && _hasContext;
 
     return SafeArea(
       child: SingleChildScrollView(
@@ -325,9 +521,19 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
             const SizedBox(height: 12),
             TextField(
               controller: _translation,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Translation',
-                border: OutlineInputBorder(),
+                border: const OutlineInputBorder(),
+                suffixIcon: showWordDeepL
+                    ? const Align(
+                        alignment: Alignment.centerRight,
+                        widthFactor: 1,
+                        child: Padding(
+                          padding: EdgeInsets.only(right: 10),
+                          child: _DeepLBadge(),
+                        ),
+                      )
+                    : null,
               ),
             ),
             if (_suggestionError != null) ...[
@@ -350,6 +556,10 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
                     ),
                 ],
               ),
+            ],
+            if (showContext) ...[
+              const SizedBox(height: 16),
+              _buildContextSection(theme),
             ],
             const SizedBox(height: 12),
             TextField(
@@ -449,6 +659,32 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Small "DeepL" pill marking a field/value as produced by DeepL, so the reader
+/// knows the translation's source.
+class _DeepLBadge extends StatelessWidget {
+  const _DeepLBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: scheme.primaryContainer,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        'DeepL',
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: scheme.onPrimaryContainer,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.3,
         ),
       ),
     );

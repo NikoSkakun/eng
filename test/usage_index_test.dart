@@ -90,31 +90,37 @@ void main() {
   );
 
   group('UsageRepository', () {
-    test('putPair round-trips snippet/highlights/pointer and marks indexed', () {
-      final e = addEntry('cat');
-      final d = addDocRow('/a.txt');
-      expect(usages.isIndexed(e.id, d.id), isFalse);
+    test(
+      'putPair round-trips snippet/highlights/pointer and marks indexed',
+      () {
+        final e = addEntry('cat');
+        final d = addDocRow('/a.txt');
+        expect(usages.isIndexed(e.id, d.id), isFalse);
 
-      usages.putPair(e.id, d.id, [
-        u(e.id, d.id, page: 5, snip: 'a cat sat', hl: [(start: 2, end: 5)]),
-        u(e.id, d.id, block: 3, snip: 'cat again', hl: [(start: 0, end: 3)]),
-      ]);
+        usages.putPair(e.id, d.id, [
+          u(e.id, d.id, page: 5, snip: 'a cat sat', hl: [(start: 2, end: 5)]),
+          u(e.id, d.id, block: 3, snip: 'cat again', hl: [(start: 0, end: 3)]),
+        ]);
 
-      expect(usages.isIndexed(e.id, d.id), isTrue);
-      expect(usages.indexedDocsForEntry(e.id), {d.id});
-      final got = usages.forEntry(e.id);
-      expect(got.length, 2);
-      expect(got[0].page, 5);
-      expect(got[0].snippet, 'a cat sat');
-      expect(got[0].highlights, [(start: 2, end: 5)]);
-      expect(got[1].blockIndex, 3);
-    });
+        expect(usages.isIndexed(e.id, d.id), isTrue);
+        expect(usages.indexedDocsForEntry(e.id), {d.id});
+        final got = usages.forEntry(e.id);
+        expect(got.length, 2);
+        expect(got[0].page, 5);
+        expect(got[0].snippet, 'a cat sat');
+        expect(got[0].highlights, [(start: 2, end: 5)]);
+        expect(got[1].blockIndex, 3);
+      },
+    );
 
     test('putPair replaces the prior result for the same pair', () {
       final e = addEntry('cat');
       final d = addDocRow('/a.txt');
       usages.putPair(e.id, d.id, [u(e.id, d.id, page: 1)]);
-      usages.putPair(e.id, d.id, [u(e.id, d.id, page: 2), u(e.id, d.id, page: 3)]);
+      usages.putPair(e.id, d.id, [
+        u(e.id, d.id, page: 2),
+        u(e.id, d.id, page: 3),
+      ]);
       expect(usages.forEntry(e.id).length, 2);
     });
 
@@ -143,18 +149,21 @@ void main() {
   });
 
   group('UsageIndexer', () {
-    test('reindexEntry scans the library and persists occurrence pointers', () async {
-      final e = addEntry('cat');
-      final d = await addTxt('a.txt', 'The cat sat.\n\nNo match here.');
-      UsageIndexer(usages, dict, lib, WordContextsService()).reindexEntry(e);
+    test(
+      'reindexEntry scans the library and persists occurrence pointers',
+      () async {
+        final e = addEntry('cat');
+        final d = await addTxt('a.txt', 'The cat sat.\n\nNo match here.');
+        UsageIndexer(usages, dict, lib, WordContextsService()).reindexEntry(e);
 
-      await _until(() => usages.isIndexed(e.id, d.id));
-      final got = usages.forEntry(e.id);
-      expect(got.length, 1);
-      expect(got.single.documentId, d.id);
-      expect(got.single.blockIndex, 0); // first paragraph
-      expect(got.single.snippet, 'The cat sat.');
-    });
+        await _until(() => usages.isIndexed(e.id, d.id));
+        final got = usages.forEntry(e.id);
+        expect(got.length, 1);
+        expect(got.single.documentId, d.id);
+        expect(got.single.blockIndex, 0); // first paragraph
+        expect(got.single.snippet, 'The cat sat.');
+      },
+    );
 
     test('ensureEntryIndexed picks up a newly added document', () async {
       final e = addEntry('cat');

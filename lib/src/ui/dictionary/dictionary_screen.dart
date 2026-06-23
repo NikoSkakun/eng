@@ -29,9 +29,9 @@ class _DictionaryScreenState extends ConsumerState<DictionaryScreen> {
   }
 
   void _showContexts(DictionaryEntry entry) {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => WordContextsScreen(entry: entry)),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => WordContextsScreen(entry: entry)));
   }
 
   Future<void> _delete(DictionaryEntry entry) async {

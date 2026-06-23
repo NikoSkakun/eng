@@ -30,17 +30,16 @@ class UsageRepository {
     return {for (final r in rows) r['document_id'] as int};
   }
 
-  bool isIndexed(int entryId, int documentId) => _db
-      .select(
-        'SELECT 1 FROM usage_index WHERE entry_id = ? AND document_id = ? LIMIT 1;',
-        [entryId, documentId],
-      )
-      .isNotEmpty;
+  bool isIndexed(int entryId, int documentId) => _db.select(
+    'SELECT 1 FROM usage_index WHERE entry_id = ? AND document_id = ? LIMIT 1;',
+    [entryId, documentId],
+  ).isNotEmpty;
 
   int countForEntry(int entryId) =>
       _db.select('SELECT COUNT(*) AS c FROM usages WHERE entry_id = ?;', [
-        entryId,
-      ]).first['c'] as int;
+            entryId,
+          ]).first['c']
+          as int;
 
   /// Replace the cached usages for one (entry, document) pair and mark the pair
   /// scanned. Atomic, so a partially-written pair is never observed.
@@ -62,7 +61,9 @@ class UsageRepository {
             u.page,
             u.blockIndex,
             u.snippet,
-            jsonEncode([for (final h in u.highlights) [h.start, h.end]]),
+            jsonEncode([
+              for (final h in u.highlights) [h.start, h.end],
+            ]),
             i,
           ],
         );

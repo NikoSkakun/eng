@@ -13,6 +13,7 @@ import '../../models/library_document.dart';
 import '../../state/dictionary_controller.dart';
 import '../../state/library_controller.dart';
 import '../../state/settings_controller.dart';
+import '../../text/passage_extractor.dart';
 import '../../text/term_matcher.dart';
 import '../../text/text_normalizer.dart';
 import 'add_entry_sheet.dart';
@@ -63,6 +64,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   // holds that parent word (e.g. selecting "perturbation" inside
   // "perturbations") so a new entry can default to sub-word matching.
   String? _selectedSourceWord;
+  // The paragraph/passage the current selection sits in, for the add-entry
+  // sheet's DeepL "in context" translation.
+  String? _selectedPassage;
   Timer? _selectionDebounce;
   // Bumped on every selection change so a stale in-flight debounce callback
   // (whose timer was cancelled after it already started awaiting) can detect it
@@ -588,6 +592,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         setState(() {
           _selectedText = null;
           _selectedSourceWord = null;
+          _selectedPassage = null;
         });
       }
       return;
@@ -610,11 +615,28 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           .trim();
       final text = TextNormalizer.trimEdgePunctuation(raw);
       final parent = text.isEmpty ? null : _detectParentWord(ranges, text);
+      final passage = text.isEmpty ? null : _passageForRanges(ranges);
       setState(() {
         _selectedText = text.isEmpty ? null : text;
         _selectedSourceWord = parent;
+        _selectedPassage = passage;
       });
     });
+  }
+
+  /// The paragraph/passage the current selection sits in, recovered from the
+  /// page's flat text, for the add-entry sheet's "in context" translation.
+  String? _passageForRanges(List<PdfPageTextRange> ranges) {
+    if (ranges.isEmpty) return null;
+    final first = ranges.first;
+    final full = first.pageText.fullText;
+    // A multi-line selection yields several ranges on the same page; span from
+    // the first range's start to the last same-page range's end.
+    final last = ranges.last;
+    final end = identical(last.pageText, first.pageText) ? last.end : first.end;
+    final raw = extractContextPassage(full, first.start, end);
+    final passage = TextNormalizer.joinWrappedLines(raw).trim();
+    return passage.isEmpty ? null : passage;
   }
 
   /// If [text] is a single word selected from *inside* a longer word, return
@@ -671,12 +693,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       documentId: widget.document.id,
       initialTerm: text,
       initialSourceWord: existing == null ? _selectedSourceWord : null,
+      contextPassage: _selectedPassage,
       existing: existing,
     );
     if (saved == true && mounted) {
       setState(() {
         _selectedText = null;
         _selectedSourceWord = null;
+        _selectedPassage = null;
       });
     }
   }

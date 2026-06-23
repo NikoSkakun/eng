@@ -70,8 +70,9 @@ const Map<String, String> _entities = {
   'shy': '',
 };
 
-final RegExp _entityPattern =
-    RegExp(r'&(#x?[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);');
+final RegExp _entityPattern = RegExp(
+  r'&(#x?[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);',
+);
 
 /// Decode numeric (`&#233;`, `&#xE9;`) and common named HTML entities.
 String decodeHtmlEntities(String input) {
@@ -99,12 +100,21 @@ String _safeChar(int code) {
 }
 
 final RegExp _commentRe = RegExp(r'<!--.*?-->', dotAll: true);
-final RegExp _scriptRe =
-    RegExp(r'<script[^>]*>.*?</script>', dotAll: true, caseSensitive: false);
-final RegExp _styleRe =
-    RegExp(r'<style[^>]*>.*?</style>', dotAll: true, caseSensitive: false);
-final RegExp _headRe =
-    RegExp(r'<head[^>]*>.*?</head>', dotAll: true, caseSensitive: false);
+final RegExp _scriptRe = RegExp(
+  r'<script[^>]*>.*?</script>',
+  dotAll: true,
+  caseSensitive: false,
+);
+final RegExp _styleRe = RegExp(
+  r'<style[^>]*>.*?</style>',
+  dotAll: true,
+  caseSensitive: false,
+);
+final RegExp _headRe = RegExp(
+  r'<head[^>]*>.*?</head>',
+  dotAll: true,
+  caseSensitive: false,
+);
 final RegExp _headingRe = RegExp(
   r'<h[1-6][^>]*>(.*?)</h[1-6]>',
   dotAll: true,
