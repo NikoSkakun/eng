@@ -320,7 +320,15 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           for (final b in range.enumerateFragmentBoundingRects()) {
             if (b.bounds.isNotEmpty) rects.add(b.bounds);
           }
-          if (rects.isNotEmpty) occ.add(_Occurrence(m.entryId, rects));
+          if (rects.isNotEmpty) {
+            occ.add(
+              _Occurrence(
+                m.entryId,
+                rects,
+                _passageFromPageText(pageText.fullText, m.start, m.end),
+              ),
+            );
+          }
         } catch (_) {
           // Skip occurrences whose ranges can't be resolved to rects.
         }
@@ -386,10 +394,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           opaque: false,
           hitTestBehavior: HitTestBehavior.translucent,
           onHover: (e) {
-            final entry = _hitEntry(e.localPosition, pageRect, page);
+            final occ = _hitOccurrence(e.localPosition, pageRect, page);
+            final entry = _entryOf(occ);
             if (entry != null) {
               _hideTimer?.cancel();
-              _showPopup(entry, e.position);
+              _showPopup(entry, e.position, passage: occ!.passage);
             } else {
               _scheduleHide();
             }
@@ -397,15 +406,17 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           onExit: (_) => _scheduleHide(),
           child: PdfOverlayInteractionRegion(
             onTap: (d) {
-              final entry = _hitEntry(d.localPosition, pageRect, page);
+              final occ = _hitOccurrence(d.localPosition, pageRect, page);
+              final entry = _entryOf(occ);
               if (entry == null) return false; // let pdfrx handle the tap
-              _showPopup(entry, d.globalPosition);
+              _showPopup(entry, d.globalPosition, passage: occ!.passage);
               return true;
             },
             onLongPress: (d) {
-              final entry = _hitEntry(d.localPosition, pageRect, page);
+              final occ = _hitOccurrence(d.localPosition, pageRect, page);
+              final entry = _entryOf(occ);
               if (entry == null) return false;
-              unawaited(_openEdit(entry));
+              unawaited(_openEdit(entry, passage: occ!.passage));
               return true;
             },
             child: const SizedBox.expand(),
@@ -415,13 +426,22 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     ];
   }
 
-  /// The smallest highlighted term whose rect contains [local] (page-overlay
-  /// coordinates), or null. Mapping happens only on a pointer event, not per
-  /// frame, so this stays cheap even with many highlights on a page.
-  DictionaryEntry? _hitEntry(Offset local, Rect pageRect, PdfPage page) {
+  /// The highlight-enabled entry for [occ], or null. Kept alongside
+  /// [_hitOccurrence] so callers can get both the entry and its precomputed
+  /// passage from a single hit-test.
+  DictionaryEntry? _entryOf(_Occurrence? occ) {
+    if (occ == null) return null;
+    final entry = _dictState.byId[occ.entryId];
+    return (entry == null || !entry.highlightEnabled) ? null : entry;
+  }
+
+  /// The smallest highlighted occurrence whose rect contains [local] (page-
+  /// overlay coordinates), or null. Mapping happens only on a pointer event, not
+  /// per frame, so this stays cheap even with many highlights on a page.
+  _Occurrence? _hitOccurrence(Offset local, Rect pageRect, PdfPage page) {
     final occ = _occurrencesByPage[page.pageNumber];
     if (occ == null) return null;
-    DictionaryEntry? best;
+    _Occurrence? best;
     var bestArea = double.infinity;
     for (final o in occ) {
       final entry = _dictState.byId[o.entryId];
@@ -432,7 +452,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           final area = r.width * r.height;
           if (area < bestArea) {
             bestArea = area;
-            best = entry;
+            best = o;
           }
         }
       }
@@ -498,7 +518,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       4.0,
       200.0,
     );
-    final key = '$text ${fontSize.toStringAsFixed(1)}';
+    final key = '$text ${fontSize.toStringAsFixed(1)}';
     // Extend the key with the painter-affecting style (letter spacing + colour;
     // size is already in `key`) so changing those never reuses a stale painter.
     final styleKey = '$key|${s.inlineGlossLetterSpacing}|${s.inlineGlossColor}';
@@ -560,12 +580,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     tp.paint(canvas, Offset(left, top));
   }
 
-  void _showPopup(DictionaryEntry entry, Offset global) {
+  void _showPopup(DictionaryEntry entry, Offset global, {String? passage}) {
     _hideTimer?.cancel();
     if (_popup?.entry.id == entry.id) return; // already showing this term
     final box = _stackKey.currentContext?.findRenderObject();
     final local = box is RenderBox ? box.globalToLocal(global) : global;
-    setState(() => _popup = _PopupModel(entry, local));
+    setState(() => _popup = _PopupModel(entry, local, passage));
   }
 
   void _scheduleHide() {
@@ -575,11 +595,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     });
   }
 
-  Future<void> _openEdit(DictionaryEntry entry) async {
+  Future<void> _openEdit(DictionaryEntry entry, {String? passage}) async {
     setState(() => _popup = null);
     await AddEntrySheet.show(
       context,
       documentId: widget.document.id,
+      contextPassage: passage,
       existing: entry,
     );
   }
@@ -634,7 +655,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     // the first range's start to the last same-page range's end.
     final last = ranges.last;
     final end = identical(last.pageText, first.pageText) ? last.end : first.end;
-    final raw = extractContextPassage(full, first.start, end);
+    return _passageFromPageText(full, first.start, end);
+  }
+
+  /// Extract the surrounding passage for the half-open range `[start, end)` in a
+  /// page's flat [full] text and de-wrap it into flowing text. Shared by the
+  /// selection path and per-occurrence highlight computation.
+  String? _passageFromPageText(String full, int start, int end) {
+    final raw = extractContextPassage(full, start, end);
     final passage = TextNormalizer.joinWrappedLines(raw).trim();
     return passage.isEmpty ? null : passage;
   }
@@ -1078,7 +1106,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       child: TranslationPopupCard(
         entry: popup.entry,
         maxWidth: width,
-        onEdit: () => _openEdit(popup.entry),
+        onEdit: () => _openEdit(popup.entry, passage: popup.passage),
         onPointerEnter: () => _hideTimer?.cancel(),
         onPointerExit: _scheduleHide,
       ),
@@ -1134,15 +1162,19 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   }
 }
 
-/// A matched term occurrence on a page, as PDF-space rects (one per text line).
+/// A matched term occurrence on a page, as PDF-space rects (one per text line),
+/// plus the surrounding passage (for the add-entry sheet's in-context
+/// translation when this term is edited from its highlight).
 class _Occurrence {
-  const _Occurrence(this.entryId, this.rects);
+  const _Occurrence(this.entryId, this.rects, this.passage);
   final int entryId;
   final List<PdfRect> rects;
+  final String? passage;
 }
 
 class _PopupModel {
-  const _PopupModel(this.entry, this.anchorLocal);
+  const _PopupModel(this.entry, this.anchorLocal, this.passage);
   final DictionaryEntry entry;
   final Offset anchorLocal;
+  final String? passage;
 }
