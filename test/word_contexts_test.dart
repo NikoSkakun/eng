@@ -36,20 +36,23 @@ void main() {
     return WordContextsService().contextsIn(docFor(f.path), matcher);
   }
 
-  test('returns each paragraph containing the term; whole-word, case-insensitive', () async {
-    final contexts = await contextsOf(
-      'The cat sat.\n\nA dog ran. The CAT slept.\n\nNothing about categories.',
-      matcherFor('cat'),
-    );
+  test(
+    'returns each paragraph containing the term; whole-word, case-insensitive',
+    () async {
+      final contexts = await contextsOf(
+        'The cat sat.\n\nA dog ran. The CAT slept.\n\nNothing about categories.',
+        matcherFor('cat'),
+      );
 
-    // "categories" must NOT match (whole-word), so exactly two paragraphs hit.
-    expect(contexts.length, 2);
-    expect(contexts.every((c) => c.sourceTitle == 'Sample'), isTrue);
-    expect(highlighted(contexts[0]).toLowerCase(), 'cat');
-    expect(highlighted(contexts[1]).toLowerCase(), 'cat');
-    // Short paragraphs are shown whole.
-    expect(contexts[0].text, 'The cat sat.');
-  });
+      // "categories" must NOT match (whole-word), so exactly two paragraphs hit.
+      expect(contexts.length, 2);
+      expect(contexts.every((c) => c.sourceTitle == 'Sample'), isTrue);
+      expect(highlighted(contexts[0]).toLowerCase(), 'cat');
+      expect(highlighted(contexts[1]).toLowerCase(), 'cat');
+      // Short paragraphs are shown whole.
+      expect(contexts[0].text, 'The cat sat.');
+    },
+  );
 
   test('highlights every occurrence within one paragraph', () async {
     final contexts = await contextsOf('cat and cat again', matcherFor('cat'));
@@ -57,17 +60,24 @@ void main() {
     expect(contexts.single.highlights.length, 2);
   });
 
-  test('windows a long block around the match and maps the highlight', () async {
-    final long = '${'lorem ' * 120}cat ${'ipsum ' * 120}'; // one >600-char block
-    final contexts = await contextsOf(long, matcherFor('cat'));
+  test(
+    'windows a long block around the match and maps the highlight',
+    () async {
+      final long =
+          '${'lorem ' * 120}cat ${'ipsum ' * 120}'; // one >600-char block
+      final contexts = await contextsOf(long, matcherFor('cat'));
 
-    expect(contexts.length, 1);
-    final c = contexts.single;
-    expect(c.text.length, lessThan(long.length)); // windowed, not the whole block
-    expect(c.text, contains('…'));
-    final h = c.highlights.single;
-    expect(c.text.substring(h.start, h.end), 'cat');
-  });
+      expect(contexts.length, 1);
+      final c = contexts.single;
+      expect(
+        c.text.length,
+        lessThan(long.length),
+      ); // windowed, not the whole block
+      expect(c.text, contains('…'));
+      final h = c.highlights.single;
+      expect(c.text.substring(h.start, h.end), 'cat');
+    },
+  );
 
   test('no contexts when the term is absent', () async {
     final contexts = await contextsOf('nothing to see here', matcherFor('cat'));

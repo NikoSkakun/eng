@@ -42,8 +42,7 @@ BookContent parseMobi(Uint8List data) {
   // MOBI header (immediately after the 16-byte PalmDOC header).
   var encoding = 1252;
   var extraFlags = 0;
-  if (rec0Start + 20 <= rec0End &&
-      _ascii(data, rec0Start + 16, 4) == 'MOBI') {
+  if (rec0Start + 20 <= rec0End && _ascii(data, rec0Start + 16, 4) == 'MOBI') {
     final mobiHeaderLen = bd.getUint32(rec0Start + 20);
     if (rec0Start + 32 <= rec0End) {
       encoding = bd.getUint32(rec0Start + 28);
@@ -62,8 +61,9 @@ BookContent parseMobi(Uint8List data) {
   }
 
   final out = BytesBuilder();
-  final lastTextRecord =
-      recordCount < numRecords - 1 ? recordCount : numRecords - 1;
+  final lastTextRecord = recordCount < numRecords - 1
+      ? recordCount
+      : numRecords - 1;
   for (var i = 1; i <= lastTextRecord; i++) {
     final start = offsets[i];
     final end = offsets[i + 1];

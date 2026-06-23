@@ -13,14 +13,16 @@ BookContent parseFb2(String xmlString) {
   }
 
   final blocks = <BookBlock>[];
-  for (final body in doc.descendants
-      .whereType<XmlElement>()
-      .where((e) => e.name.local == 'body')) {
+  for (final body in doc.descendants.whereType<XmlElement>().where(
+    (e) => e.name.local == 'body',
+  )) {
     _walk(body, blocks);
   }
 
   if (blocks.isEmpty) {
-    throw const BookFormatException('This FB2 file contained no readable text.');
+    throw const BookFormatException(
+      'This FB2 file contained no readable text.',
+    );
   }
 
   String? title;

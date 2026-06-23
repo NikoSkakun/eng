@@ -176,8 +176,12 @@ class AppDatabase {
         ord INTEGER NOT NULL DEFAULT 0
       );
     ''');
-    db.execute('CREATE INDEX IF NOT EXISTS idx_usages_entry ON usages(entry_id);');
-    db.execute('CREATE INDEX IF NOT EXISTS idx_usages_doc ON usages(document_id);');
+    db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_usages_entry ON usages(entry_id);',
+    );
+    db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_usages_doc ON usages(document_id);',
+    );
     db.execute('''
       CREATE TABLE IF NOT EXISTS usage_index(
         entry_id INTEGER NOT NULL REFERENCES dictionary(id) ON DELETE CASCADE,

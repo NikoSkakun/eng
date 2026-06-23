@@ -115,9 +115,7 @@ class _WordContextsScreenState extends ConsumerState<WordContextsScreen> {
             _IndexProgress(done: indexedSelected, total: selectedIds.length)
           else if (visible.isNotEmpty)
             _CountBar(count: visible.length),
-          Expanded(
-            child: _body(theme, visible, docsById, indexing),
-          ),
+          Expanded(child: _body(theme, visible, docsById, indexing)),
         ],
       ),
     );

@@ -66,7 +66,10 @@ void main() {
       expect(book.title, 'My Book');
       final headings = book.blocks.where((b) => b.heading).map((b) => b.text);
       expect(headings, contains('Chapter One'));
-      final paras = book.blocks.where((b) => !b.heading).map((b) => b.text).toList();
+      final paras = book.blocks
+          .where((b) => !b.heading)
+          .map((b) => b.text)
+          .toList();
       expect(paras, containsAll(['The quick brown fox.', 'Jumped over.']));
     });
   });
@@ -94,7 +97,9 @@ void main() {
 
   group('parseMobi', () {
     test('parses a minimal PalmDOC MOBI into blocks', () {
-      final bytes = _buildMobi('<h1>Title</h1><p>Hello world. The cat sat.</p>');
+      final bytes = _buildMobi(
+        '<h1>Title</h1><p>Hello world. The cat sat.</p>',
+      );
       final book = parseMobi(bytes);
       expect(book.blocks.first.heading, isTrue);
       expect(book.blocks.first.text, 'Title');
@@ -114,12 +119,14 @@ void main() {
 }
 
 Uint8List _buildEpub() {
-  const container = '<?xml version="1.0"?>'
+  const container =
+      '<?xml version="1.0"?>'
       '<container version="1.0" '
       'xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
       '<rootfiles><rootfile full-path="OEBPS/content.opf" '
       'media-type="application/oebps-package+xml"/></rootfiles></container>';
-  const opf = '<?xml version="1.0"?>'
+  const opf =
+      '<?xml version="1.0"?>'
       '<package xmlns="http://www.idpf.org/2007/opf" version="2.0" '
       'unique-identifier="id">'
       '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
@@ -128,7 +135,8 @@ Uint8List _buildEpub() {
       '<item id="c1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>'
       '</manifest>'
       '<spine><itemref idref="c1"/></spine></package>';
-  const chapter = '<html><body><h1>Greeting</h1>'
+  const chapter =
+      '<html><body><h1>Greeting</h1>'
       '<p>Hello from the first chapter.</p></body></html>';
 
   final archive = Archive()

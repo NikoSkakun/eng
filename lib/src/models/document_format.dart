@@ -43,7 +43,9 @@ const List<String> kSupportedImportExtensions = <String>[
 DocumentFormat documentFormatForPath(String path) {
   final dot = path.lastIndexOf('.');
   final slash = path.lastIndexOf(RegExp(r'[/\\]'));
-  final ext = (dot < 0 || dot < slash) ? '' : path.substring(dot + 1).toLowerCase();
+  final ext = (dot < 0 || dot < slash)
+      ? ''
+      : path.substring(dot + 1).toLowerCase();
   switch (ext) {
     case 'pdf':
       return DocumentFormat.pdf;
@@ -78,5 +80,7 @@ bool isSupportedImportPath(String path) {
   final dot = path.lastIndexOf('.');
   final slash = path.lastIndexOf(RegExp(r'[/\\]'));
   if (dot < 0 || dot < slash) return false;
-  return kSupportedImportExtensions.contains(path.substring(dot + 1).toLowerCase());
+  return kSupportedImportExtensions.contains(
+    path.substring(dot + 1).toLowerCase(),
+  );
 }

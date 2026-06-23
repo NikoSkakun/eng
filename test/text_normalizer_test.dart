@@ -29,11 +29,13 @@ void main() {
       expect(join('well-\nKnown'), 'well- Known');
     });
 
-    test('does not merge across an en/em dash (punctuation, not a word break)',
-        () {
-      expect(join('foo —\nbar'), 'foo — bar');
-      expect(join('foo –\nbar'), 'foo – bar');
-    });
+    test(
+      'does not merge across an en/em dash (punctuation, not a word break)',
+      () {
+        expect(join('foo —\nbar'), 'foo — bar');
+        expect(join('foo –\nbar'), 'foo – bar');
+      },
+    );
 
     test('leaves single-line text untouched', () {
       expect(join('already continuous'), 'already continuous');

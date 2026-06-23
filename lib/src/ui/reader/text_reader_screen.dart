@@ -98,7 +98,10 @@ class _TextReaderScreenState extends ConsumerState<TextReaderScreen> {
 
   Future<void> _load() async {
     try {
-      final book = await loadBook(widget.document.filePath, widget.document.format);
+      final book = await loadBook(
+        widget.document.filePath,
+        widget.document.format,
+      );
       if (!mounted) return;
       _book = book;
       _computeCumulative(book);
@@ -151,7 +154,9 @@ class _TextReaderScreenState extends ConsumerState<TextReaderScreen> {
       // Reflowable docs store the scroll pixel offset in `viewMatrix` (the PDF
       // reader stores a 16-float matrix there; a book always opens here so the
       // two interpretations never collide).
-      ref.read(libraryControllerProvider.notifier).saveView(
+      ref
+          .read(libraryControllerProvider.notifier)
+          .saveView(
             widget.document.id,
             page: 1,
             viewMatrix: _scrollController.offset.toStringAsFixed(1),
@@ -255,9 +260,65 @@ class _TextReaderScreenState extends ConsumerState<TextReaderScreen> {
       context,
       documentId: widget.document.id,
       initialTerm: text,
+      contextPassage: _passageForSelection(text),
       existing: existing,
     );
     if (saved == true && mounted) setState(() => _selectedText = null);
+  }
+
+  /// The paragraph (book block) the current selection sits in, for the
+  /// add-entry sheet's DeepL "in context" translation. Prefers blocks currently
+  /// on screen so a word that recurs resolves to the one being read.
+  String? _passageForSelection(String text) {
+    final book = _book;
+    final needle = text.trim().toLowerCase();
+    if (book == null || needle.isEmpty) return null;
+    bool matches(int i) => book.blocks[i].text.toLowerCase().contains(needle);
+    final (lo, hi) = _visibleBlockRange();
+    for (var i = lo; i < hi; i++) {
+      if (matches(i)) return book.blocks[i].text;
+    }
+    // Fall back to a whole-document scan if it wasn't in the estimated viewport.
+    for (var i = 0; i < book.blocks.length; i++) {
+      if (matches(i)) return book.blocks[i].text;
+    }
+    return null;
+  }
+
+  /// Estimated `[start, end)` range of block indices currently on screen, using
+  /// the same linear char-offset↔scroll mapping as jump/restore, widened by a
+  /// block on each side to tolerate the estimate.
+  (int, int) _visibleBlockRange() {
+    final book = _book;
+    if (book == null) return (0, 0);
+    final n = book.blocks.length;
+    if (!_scrollController.hasClients) return (0, n);
+    final pos = _scrollController.position;
+    final max = pos.maxScrollExtent;
+    if (max <= 0) return (0, n);
+    final topFrac = (_scrollController.offset / max).clamp(0.0, 1.0);
+    final botFrac = ((_scrollController.offset + pos.viewportDimension) / max)
+        .clamp(0.0, 1.0);
+    final lo = (_blockAtChar(topFrac * _totalChars) - 1).clamp(0, n);
+    final hi = (_blockAtChar(botFrac * _totalChars) + 2).clamp(0, n);
+    return (lo, hi);
+  }
+
+  /// Index of the last block whose cumulative start char is `<= charOffset`.
+  int _blockAtChar(double charOffset) {
+    final cum = _cumChars;
+    if (cum.isEmpty) return 0;
+    var lo = 0, hi = cum.length - 1, ans = 0;
+    while (lo <= hi) {
+      final mid = (lo + hi) >> 1;
+      if (cum[mid] <= charOffset) {
+        ans = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return ans;
   }
 
   // --- Find navigation -------------------------------------------------------
@@ -549,7 +610,9 @@ class _TextReaderScreenState extends ConsumerState<TextReaderScreen> {
                   const SizedBox(width: 8),
                   FilledButton.icon(
                     onPressed: _addSelected,
-                    icon: Icon(existing == null ? Icons.add : Icons.edit_outlined),
+                    icon: Icon(
+                      existing == null ? Icons.add : Icons.edit_outlined,
+                    ),
                     label: Text(existing == null ? 'Add' : 'Edit'),
                   ),
                   IconButton(
@@ -698,30 +761,34 @@ class _BlockViewState extends State<_BlockView> {
         ..onTapUp = (d) => widget.onTapEntry(entry, d.globalPosition);
       _recognizers.add(recognizer);
 
-      children.add(TextSpan(
-        text: text.substring(m.start, m.end),
-        style: TextStyle(
-          backgroundColor: isNoColor(colorVal) ? null : Color(colorVal),
+      children.add(
+        TextSpan(
+          text: text.substring(m.start, m.end),
+          style: TextStyle(
+            backgroundColor: isNoColor(colorVal) ? null : Color(colorVal),
+          ),
+          recognizer: recognizer,
+          mouseCursor: SystemMouseCursors.click,
+          onEnter: (e) => widget.onHoverEntry(entry, e.position),
+          onExit: (_) => widget.onHoverExit(),
         ),
-        recognizer: recognizer,
-        mouseCursor: SystemMouseCursors.click,
-        onEnter: (e) => widget.onHoverEntry(entry, e.position),
-        onExit: (_) => widget.onHoverExit(),
-      ));
+      );
 
       final translation = entry.translation?.trim();
       if (showGloss && translation != null && translation.isNotEmpty) {
-        children.add(TextSpan(
-          text: ' [$translation]',
-          style: TextStyle(
-            color: Color(settings.inlineGlossColor),
-            fontSize: (base?.fontSize ?? 16) * 0.72,
-            letterSpacing: settings.inlineGlossLetterSpacing,
-            backgroundColor: isNoColor(settings.inlineGlossBgColor)
-                ? null
-                : Color(settings.inlineGlossBgColor),
+        children.add(
+          TextSpan(
+            text: ' [$translation]',
+            style: TextStyle(
+              color: Color(settings.inlineGlossColor),
+              fontSize: (base?.fontSize ?? 16) * 0.72,
+              letterSpacing: settings.inlineGlossLetterSpacing,
+              backgroundColor: isNoColor(settings.inlineGlossBgColor)
+                  ? null
+                  : Color(settings.inlineGlossBgColor),
+            ),
           ),
-        ));
+        );
       }
       cursor = m.end;
     }

@@ -157,6 +157,12 @@ class AppSettings {
       definitionProvider != DefinitionProviderId.none &&
       kDefinitionLanguages.contains(learningLang);
 
+  /// Whether DeepL is the active translation provider and has a usable API key.
+  /// Gates the in-context (paragraph) translation shown in the add-entry sheet.
+  bool get deepLEnabled =>
+      translationProvider == TranslationProviderId.deepL &&
+      deepLApiKey.trim().isNotEmpty;
+
   AppSettings copyWith({
     String? learningLang,
     String? nativeLang,
