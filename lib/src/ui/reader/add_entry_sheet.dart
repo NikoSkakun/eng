@@ -96,6 +96,9 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
   String? _contextTranslation;
   String? _contextError;
 
+  /// Whether the editing-time DeepL suggestion panel has been requested.
+  bool _showDeepLPanel = false;
+
   @override
   void initState() {
     super.initState();
@@ -112,20 +115,30 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
     // multi-word terms.
     _term.addListener(_onTermChanged);
 
-    final settings = ref.read(settingsControllerProvider);
-    if (settings.autoSuggestEnabled) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        // Auto-suggest a translation only for brand-new entries (don't clobber a
-        // saved one when editing).
-        if (e == null && _term.text.isNotEmpty) _fetchSuggestion();
-        // Translate the surrounding passage with DeepL whenever we have one and
-        // DeepL is active — useful when adding and when editing from a selection.
-        if (settings.deepLEnabled && _hasContext) _fetchContextTranslation();
-      });
+    // Brand-new entries auto-fetch DeepL data on open. When editing, nothing is
+    // fetched automatically — the user triggers it with the "Suggest with
+    // DeepL" button, so a saved translation is never silently re-fetched or
+    // overwritten and the suggestions appear in a separate panel.
+    if (e == null && _term.text.isNotEmpty) {
+      final settings = ref.read(settingsControllerProvider);
+      if (settings.autoSuggestEnabled) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _fetchSuggestion();
+          if (settings.deepLEnabled && _hasContext) _fetchContextTranslation();
+        });
+      }
     }
   }
 
   bool get _hasContext => widget.contextPassage?.trim().isNotEmpty ?? false;
+
+  /// Fetch the DeepL word suggestion(s) and the in-context paragraph translation
+  /// for display in the editing-time panel, without touching the saved fields.
+  void _requestDeepLSuggestions() {
+    setState(() => _showDeepLPanel = true);
+    _fetchSuggestion();
+    if (_hasContext) _fetchContextTranslation();
+  }
 
   @override
   void dispose() {
@@ -164,7 +177,12 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
       setState(() {
         _suggestions = all;
         _suggestionProviderId = result.providerId;
-        if (_translation.text.trim().isEmpty && all.isNotEmpty) {
+        // Fill an empty translation field automatically, except when the
+        // suggestion was requested into the editing-time panel — there it is
+        // display-only so the saved translation is never overwritten.
+        if (!_showDeepLPanel &&
+            _translation.text.trim().isEmpty &&
+            all.isNotEmpty) {
           _translation.text = all.first;
         }
       });
@@ -332,8 +350,8 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
 
   /// The selection's surrounding paragraph (duplicated read-only) above its
   /// DeepL translation, so the term can be understood in its specific context.
+  /// Used standalone when creating a new entry.
   Widget _buildContextSection(ThemeData theme) {
-    final passage = widget.contextPassage!.trim();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -362,6 +380,17 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
           ],
         ),
         const SizedBox(height: 4),
+        _buildContextBoxes(theme),
+      ],
+    );
+  }
+
+  /// The original paragraph (term highlighted) above its DeepL translation.
+  Widget _buildContextBoxes(ThemeData theme) {
+    final passage = widget.contextPassage!.trim();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
         _buildPassageBox(
           theme,
           label: 'Original paragraph',
@@ -377,6 +406,137 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
       ],
     );
   }
+
+  /// Editing-time affordance: a button that, once pressed, reveals a read-only
+  /// sub-panel with the same DeepL data the creation window shows (translation
+  /// suggestions plus the in-context paragraph), leaving the saved fields alone.
+  Widget _buildEditDeepLArea(ThemeData theme) {
+    if (!_showDeepLPanel) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: OutlinedButton.icon(
+          onPressed: _requestDeepLSuggestions,
+          icon: const Icon(Icons.auto_awesome, size: 18),
+          label: const Text('Suggest with DeepL'),
+        ),
+      );
+    }
+    final scheme = theme.colorScheme;
+    final loading = _loadingSuggestion || _loadingContext;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 12),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.auto_awesome, size: 18, color: scheme.primary),
+              const SizedBox(width: 6),
+              Text('DeepL suggestion', style: theme.textTheme.titleSmall),
+              const SizedBox(width: 6),
+              const _DeepLBadge(),
+              const Spacer(),
+              IconButton(
+                tooltip: 'Refresh',
+                visualDensity: VisualDensity.compact,
+                onPressed: loading ? null : _requestDeepLSuggestions,
+                icon: loading
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh, size: 18),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          _buildWordSuggestionDisplay(theme),
+          if (_hasContext) ...[
+            const SizedBox(height: 12),
+            _buildContextBoxes(theme),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Read-only display of the suggested translation(s) for the edit panel, each
+  /// adoptable on tap so the saved value is replaced only when the user chooses.
+  Widget _buildWordSuggestionDisplay(ThemeData theme) {
+    final Widget body;
+    if (_loadingSuggestion && _suggestions.isEmpty) {
+      body = _inlineLoading(theme, 'Translating…');
+    } else if (_suggestionError != null && _suggestions.isEmpty) {
+      body = Text(
+        _suggestionError!,
+        style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
+      );
+    } else if (_suggestions.isEmpty) {
+      body = Text(
+        'No translation returned.',
+        style: theme.textTheme.bodyMedium?.copyWith(
+          color: theme.colorScheme.outline,
+        ),
+      );
+    } else {
+      body = SelectableText(
+        _suggestions.first,
+        style: theme.textTheme.bodyMedium,
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildPassageBox(theme, label: 'Translation', child: body),
+        if (_suggestions.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              FilledButton.tonalIcon(
+                onPressed: () =>
+                    setState(() => _translation.text = _suggestions.first),
+                icon: const Icon(Icons.check, size: 16),
+                label: const Text('Use this translation'),
+              ),
+              for (final s in _suggestions.skip(1).take(5))
+                ActionChip(
+                  label: Text(s),
+                  onPressed: () => setState(() => _translation.text = s),
+                ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _inlineLoading(ThemeData theme, String text) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      const SizedBox(
+        width: 14,
+        height: 14,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      ),
+      const SizedBox(width: 8),
+      Text(
+        text,
+        style: theme.textTheme.bodyMedium?.copyWith(
+          color: theme.colorScheme.outline,
+        ),
+      ),
+    ],
+  );
 
   Widget _buildContextTranslationBody(ThemeData theme) {
     if (_contextError != null) {
@@ -473,11 +633,14 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
     final src = languageForCode(settings.learningLang);
     final dst = languageForCode(settings.nativeLang);
     final definitionsAvailable = settings.definitionsAvailable;
-    // DeepL-specific affordances: mark the suggested translation, and show the
-    // selection's surrounding passage with its DeepL translation.
+    // DeepL-specific affordances. When creating, the suggestion auto-fills the
+    // field (badge it) and the passage shows below. When editing, the same data
+    // is offered on demand in a separate panel so saved values are never
+    // touched, so these inline/standalone variants are creation-only.
     final showWordDeepL =
-        settings.deepLEnabled && _suggestionProviderId == 'deepl';
-    final showContext = settings.deepLEnabled && _hasContext;
+        !isEditing && settings.deepLEnabled && _suggestionProviderId == 'deepl';
+    final showContext = !isEditing && settings.deepLEnabled && _hasContext;
+    final showEditDeepL = isEditing && settings.deepLEnabled;
 
     return SafeArea(
       child: SingleChildScrollView(
@@ -507,7 +670,11 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
                 border: const OutlineInputBorder(),
                 suffixIcon: IconButton(
                   tooltip: 'Suggest translation',
-                  onPressed: _loadingSuggestion ? null : _fetchSuggestion,
+                  onPressed: _loadingSuggestion
+                      ? null
+                      : (showEditDeepL
+                            ? _requestDeepLSuggestions
+                            : _fetchSuggestion),
                   icon: _loadingSuggestion
                       ? const SizedBox(
                           width: 18,
@@ -536,14 +703,14 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
                     : null,
               ),
             ),
-            if (_suggestionError != null) ...[
+            if (!showEditDeepL && _suggestionError != null) ...[
               const SizedBox(height: 6),
               Text(
                 _suggestionError!,
                 style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
               ),
             ],
-            if (_suggestions.length > 1) ...[
+            if (!showEditDeepL && _suggestions.length > 1) ...[
               const SizedBox(height: 8),
               Wrap(
                 spacing: 6,
@@ -560,6 +727,10 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
             if (showContext) ...[
               const SizedBox(height: 16),
               _buildContextSection(theme),
+            ],
+            if (showEditDeepL) ...[
+              const SizedBox(height: 12),
+              _buildEditDeepLArea(theme),
             ],
             const SizedBox(height: 12),
             TextField(
