@@ -211,12 +211,12 @@ class _TextReaderScreenState extends ConsumerState<TextReaderScreen> {
 
   // --- Popup -----------------------------------------------------------------
 
-  void _showPopup(DictionaryEntry entry, Offset global) {
+  void _showPopup(DictionaryEntry entry, Offset global, String passage) {
     _hideTimer?.cancel();
     if (_popup?.entry.id == entry.id) return;
     final box = _stackKey.currentContext?.findRenderObject();
     final local = box is RenderBox ? box.globalToLocal(global) : global;
-    setState(() => _popup = _Popup(entry, local));
+    setState(() => _popup = _Popup(entry, local, passage));
   }
 
   void _scheduleHide() {
@@ -226,11 +226,12 @@ class _TextReaderScreenState extends ConsumerState<TextReaderScreen> {
     });
   }
 
-  Future<void> _openEdit(DictionaryEntry entry) async {
+  Future<void> _openEdit(DictionaryEntry entry, {String? passage}) async {
     setState(() => _popup = null);
     await AddEntrySheet.show(
       context,
       documentId: widget.document.id,
+      contextPassage: passage,
       existing: entry,
     );
   }
@@ -574,7 +575,7 @@ class _TextReaderScreenState extends ConsumerState<TextReaderScreen> {
       child: TranslationPopupCard(
         entry: popup.entry,
         maxWidth: width,
-        onEdit: () => _openEdit(popup.entry),
+        onEdit: () => _openEdit(popup.entry, passage: popup.passage),
         onPointerEnter: () => _hideTimer?.cancel(),
         onPointerExit: _scheduleHide,
       ),
@@ -631,12 +632,17 @@ class _TextReaderScreenState extends ConsumerState<TextReaderScreen> {
 }
 
 class _Popup {
-  const _Popup(this.entry, this.anchorLocal);
+  const _Popup(this.entry, this.anchorLocal, this.passage);
   final DictionaryEntry entry;
   final Offset anchorLocal;
+
+  /// The paragraph this term was hovered/tapped in, for the add-entry sheet's
+  /// in-context translation when the term is edited from its highlight.
+  final String passage;
 }
 
-typedef _EntryAt = void Function(DictionaryEntry entry, Offset global);
+typedef _EntryAt =
+    void Function(DictionaryEntry entry, Offset global, String passage);
 
 /// One paragraph/heading. A [StatefulWidget] so the tap [GestureRecognizer]s it
 /// creates for highlighted spans are disposed when the row scrolls out of view
@@ -758,7 +764,7 @@ class _BlockViewState extends State<_BlockView> {
       }
       final colorVal = entry.colorValue ?? settings.highlightColor;
       final recognizer = TapGestureRecognizer()
-        ..onTapUp = (d) => widget.onTapEntry(entry, d.globalPosition);
+        ..onTapUp = (d) => widget.onTapEntry(entry, d.globalPosition, text);
       _recognizers.add(recognizer);
 
       children.add(
@@ -769,7 +775,7 @@ class _BlockViewState extends State<_BlockView> {
           ),
           recognizer: recognizer,
           mouseCursor: SystemMouseCursors.click,
-          onEnter: (e) => widget.onHoverEntry(entry, e.position),
+          onEnter: (e) => widget.onHoverEntry(entry, e.position, text),
           onExit: (_) => widget.onHoverExit(),
         ),
       );
