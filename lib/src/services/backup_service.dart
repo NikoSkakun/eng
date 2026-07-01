@@ -111,6 +111,7 @@ class BackupService {
             'sourceLang': e.sourceLang,
             'targetLang': e.targetLang,
             'translation': e.translation,
+            'alternativeTranslations': e.alternativeTranslations,
             'definition': e.definition,
             'notes': e.notes,
             'highlightEnabled': e.highlightEnabled,
@@ -285,6 +286,11 @@ class BackupService {
             sourceLang: (m['sourceLang'] as String?) ?? 'en',
             targetLang: (m['targetLang'] as String?) ?? 'uk',
             translation: m['translation'] as String?,
+            alternativeTranslations:
+                (m['alternativeTranslations'] as List?)
+                    ?.whereType<String>()
+                    .toList() ??
+                const [],
             definition: m['definition'] as String?,
             notes: m['notes'] as String?,
             highlightEnabled: (m['highlightEnabled'] as bool?) ?? true,

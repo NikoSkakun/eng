@@ -45,6 +45,11 @@ const int kDefaultHighlightColor = 0x66FFC107;
 /// highlighted words.
 const int kDefaultInlineGlossColor = 0xFF1565C0;
 
+/// Color of the small corner dot marking a term that has more than one
+/// translation variant. Opaque so it reads over any page background or
+/// highlight fill.
+const int kVariantMarkerColor = 0xFF1565C0;
+
 /// Default background behind the inline gloss text: none (transparent).
 const int kDefaultInlineGlossBgColor = kNoColor;
 

@@ -13,7 +13,7 @@ class AppDatabase {
   final Database db;
 
   /// Bump when the schema changes and add a branch in [_migrate].
-  static const int schemaVersion = 7;
+  static const int schemaVersion = 8;
 
   /// Open (creating if needed) the database at [path] and run migrations.
   factory AppDatabase.open(String path) {
@@ -68,6 +68,7 @@ class AppDatabase {
           source_lang TEXT NOT NULL,
           target_lang TEXT NOT NULL,
           translation TEXT,
+          alt_translations TEXT,
           definition TEXT,
           notes TEXT,
           highlight_enabled INTEGER NOT NULL DEFAULT 1,
@@ -153,6 +154,12 @@ class AppDatabase {
       db.execute('DELETE FROM usages;');
       db.execute('DELETE FROM usage_index;');
       version = 7;
+    }
+    if (version == 7) {
+      // v7 -> v8: alternative translations per entry, stored as a JSON array of
+      // strings (null/absent = none).
+      db.execute('ALTER TABLE dictionary ADD COLUMN alt_translations TEXT;');
+      version = 8;
     }
     db.userVersion = schemaVersion;
   }

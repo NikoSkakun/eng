@@ -75,6 +75,11 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
   late final TextEditingController _definition;
   late final TextEditingController _notes;
 
+  /// One editable row per alternative translation (besides the primary one in
+  /// [_translation]). Disposed with the sheet; rows removed by the user are
+  /// disposed after the frame in [_removeAlternativeAt].
+  final List<TextEditingController> _altControllers = [];
+
   late bool _global;
   late bool _highlight;
   late bool _matchPartial;
@@ -107,6 +112,9 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
     _translation = TextEditingController(text: e?.translation ?? '');
     _definition = TextEditingController(text: e?.definition ?? '');
     _notes = TextEditingController(text: e?.notes ?? '');
+    for (final alt in e?.alternativeTranslations ?? const <String>[]) {
+      _altControllers.add(TextEditingController(text: alt));
+    }
     _global = e?.isGlobal ?? true;
     _highlight = e?.highlightEnabled ?? true;
     _sourceWord = e?.sourceWord ?? widget.initialSourceWord;
@@ -147,6 +155,9 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
     _translation.dispose();
     _definition.dispose();
     _notes.dispose();
+    for (final c in _altControllers) {
+      c.dispose();
+    }
     super.dispose();
   }
 
@@ -157,6 +168,32 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
   /// Whether the current term is a single word (sub-word matching only applies
   /// to single words).
   bool get _isSingleWord => TextNormalizer.tokenize(_term.text).length == 1;
+
+  void _addAlternativeField() {
+    setState(() => _altControllers.add(TextEditingController()));
+  }
+
+  void _removeAlternativeAt(int index) {
+    final removed = _altControllers.removeAt(index);
+    setState(() {});
+    // Dispose after the frame: the field still referencing this controller is
+    // torn down during the rebuild, and disposing a still-attached controller
+    // throws "used after being disposed".
+    WidgetsBinding.instance.addPostFrameCallback((_) => removed.dispose());
+  }
+
+  /// Add [suggestion] as an alternative translation, unless it already matches
+  /// the primary translation or an existing alternative (case-insensitively).
+  void _addSuggestionAsAlternative(String suggestion) {
+    final t = suggestion.trim();
+    if (t.isEmpty) return;
+    final lower = t.toLowerCase();
+    if (_translation.text.trim().toLowerCase() == lower) return;
+    for (final c in _altControllers) {
+      if (c.text.trim().toLowerCase() == lower) return;
+    }
+    setState(() => _altControllers.add(TextEditingController(text: t)));
+  }
 
   Future<void> _fetchSuggestion() async {
     final term = _term.text.trim();
@@ -283,6 +320,24 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
     String? orNull(TextEditingController c) =>
         c.text.trim().isEmpty ? null : c.text.trim();
     final scope = _global ? null : widget.documentId;
+
+    // Primary + alternative translations. Alternatives are trimmed, de-duplicated
+    // case-insensitively, and never repeat the primary. If the primary was left
+    // empty but alternatives were entered, promote the first so there is always
+    // a primary to show inline and in lists.
+    String? primary = orNull(_translation);
+    final alternatives = <String>[];
+    final seenAlts = <String>{};
+    for (final c in _altControllers) {
+      final t = c.text.trim();
+      if (t.isEmpty) continue;
+      final key = t.toLowerCase();
+      if (primary != null && key == primary.toLowerCase()) continue;
+      if (seenAlts.add(key)) alternatives.add(t);
+    }
+    if (primary == null && alternatives.isNotEmpty) {
+      primary = alternatives.removeAt(0);
+    }
     // Sub-word matching only applies to single-word terms; drop the remembered
     // parent word if matching is off, the term is now multi-word, or the term
     // was edited so it is no longer actually a part of that parent word.
@@ -304,7 +359,8 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
             term: term,
             sourceLang: settings.learningLang,
             targetLang: settings.nativeLang,
-            translation: orNull(_translation),
+            translation: primary,
+            alternativeTranslations: alternatives,
             definition: orNull(_definition),
             notes: orNull(_notes),
             highlightEnabled: _highlight,
@@ -316,7 +372,8 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
           )
         : base.copyWith(
             term: term,
-            translation: orNull(_translation),
+            translation: primary,
+            alternativeTranslations: alternatives,
             definition: orNull(_definition),
             notes: orNull(_notes),
             highlightEnabled: _highlight,
@@ -346,6 +403,55 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
           );
     }
     if (mounted) Navigator.of(context).pop(true);
+  }
+
+  /// Editor for the term's alternative translations: one removable text field
+  /// per variant, plus an "add" button. Provider suggestions can also be dropped
+  /// in here via the suggestion chips above.
+  Widget _buildAlternativesEditor(ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.alt_route, size: 18, color: theme.colorScheme.outline),
+            const SizedBox(width: 6),
+            Text('Alternative translations', style: theme.textTheme.titleSmall),
+          ],
+        ),
+        for (var i = 0; i < _altControllers.length; i++)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _altControllers[i],
+                    decoration: InputDecoration(
+                      isDense: true,
+                      labelText: 'Alternative ${i + 1}',
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Remove',
+                  onPressed: () => _removeAlternativeAt(i),
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+          ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: _addAlternativeField,
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('Add alternative translation'),
+          ),
+        ),
+      ],
+    );
   }
 
   /// The selection's surrounding paragraph (duplicated read-only) above its
@@ -506,12 +612,13 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
                 onPressed: () =>
                     setState(() => _translation.text = _suggestions.first),
                 icon: const Icon(Icons.check, size: 16),
-                label: const Text('Use this translation'),
+                label: const Text('Use as primary'),
               ),
               for (final s in _suggestions.skip(1).take(5))
                 ActionChip(
+                  avatar: const Icon(Icons.add, size: 16),
                   label: Text(s),
-                  onPressed: () => setState(() => _translation.text = s),
+                  onPressed: () => _addSuggestionAsAlternative(s),
                 ),
             ],
           ),
@@ -712,18 +819,28 @@ class _AddEntrySheetState extends ConsumerState<AddEntrySheet> {
             ],
             if (!showEditDeepL && _suggestions.length > 1) ...[
               const SizedBox(height: 8),
+              Text(
+                'More suggestions (tap to add as an alternative)',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.outline,
+                ),
+              ),
+              const SizedBox(height: 4),
               Wrap(
                 spacing: 6,
                 runSpacing: 6,
                 children: [
-                  for (final s in _suggestions.take(6))
+                  for (final s in _suggestions.skip(1).take(6))
                     ActionChip(
+                      avatar: const Icon(Icons.add, size: 16),
                       label: Text(s),
-                      onPressed: () => setState(() => _translation.text = s),
+                      onPressed: () => _addSuggestionAsAlternative(s),
                     ),
                 ],
               ),
             ],
+            const SizedBox(height: 12),
+            _buildAlternativesEditor(theme),
             if (showContext) ...[
               const SizedBox(height: 16),
               _buildContextSection(theme),

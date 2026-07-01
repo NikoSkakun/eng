@@ -23,6 +23,7 @@ class TranslationPopupCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final translations = entry.allTranslations;
     final card = ConstrainedBox(
       constraints: BoxConstraints(maxWidth: maxWidth, maxHeight: 320),
       child: Card(
@@ -58,15 +59,49 @@ class TranslationPopupCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (entry.translation != null &&
-                          entry.translation!.trim().isNotEmpty)
+                      if (translations.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(right: 8, bottom: 6),
-                          child: Text(
-                            entry.translation!,
-                            style: theme.textTheme.bodyLarge?.copyWith(
-                              color: theme.colorScheme.primary,
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Primary translation, prominent.
+                              Text(
+                                translations.first,
+                                style: theme.textTheme.bodyLarge?.copyWith(
+                                  color: theme.colorScheme.primary,
+                                ),
+                              ),
+                              // Alternative variants, muted, one per line.
+                              for (final alt in translations.skip(1))
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 2),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '·  ',
+                                        style: theme.textTheme.bodyMedium
+                                            ?.copyWith(
+                                              color: theme.colorScheme.outline,
+                                            ),
+                                      ),
+                                      Expanded(
+                                        child: Text(
+                                          alt,
+                                          style: theme.textTheme.bodyMedium
+                                              ?.copyWith(
+                                                color: theme
+                                                    .colorScheme
+                                                    .onSurfaceVariant,
+                                              ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                            ],
                           ),
                         ),
                       if (entry.definition != null &&

@@ -780,8 +780,31 @@ class _BlockViewState extends State<_BlockView> {
         ),
       );
 
-      final translation = entry.translation?.trim();
-      if (showGloss && translation != null && translation.isNotEmpty) {
+      // Mark terms with more than one translation variant with a small dot at
+      // the word's top-right (the popup lists every variant on hover).
+      if (entry.hasMultipleTranslations) {
+        children.add(
+          const WidgetSpan(
+            alignment: PlaceholderAlignment.top,
+            child: Padding(
+              padding: EdgeInsets.only(left: 1.5),
+              child: SizedBox(
+                width: 5,
+                height: 5,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Color(kVariantMarkerColor),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+
+      final translation = showGloss ? entry.glossText?.trim() : null;
+      if (translation != null && translation.isNotEmpty) {
         children.add(
           TextSpan(
             text: ' [$translation]',

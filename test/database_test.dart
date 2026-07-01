@@ -86,6 +86,34 @@ void main() {
       expect(updated.sourceWord, isNull);
     });
 
+    test('persists and updates alternative translations', () {
+      final repo = DictionaryRepository(db);
+      final now = DateTime.now();
+      final saved = repo.insert(
+        DictionaryEntry(
+          id: 0,
+          term: 'chat',
+          sourceLang: 'fr',
+          targetLang: 'en',
+          translation: 'cat',
+          alternativeTranslations: const ['tomcat', 'pussycat'],
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      final got = repo.getById(saved.id)!;
+      expect(got.translation, 'cat');
+      expect(got.alternativeTranslations, ['tomcat', 'pussycat']);
+      expect(got.hasMultipleTranslations, isTrue);
+      expect(got.allTranslations, ['cat', 'tomcat', 'pussycat']);
+
+      // Clearing alternatives round-trips to an empty list (column stored NULL).
+      repo.update(got.copyWith(alternativeTranslations: const []));
+      final cleared = repo.getById(saved.id)!;
+      expect(cleared.alternativeTranslations, isEmpty);
+      expect(cleared.hasMultipleTranslations, isFalse);
+    });
+
     test('scoped lookup distinguishes global vs document entries', () {
       final repo = DictionaryRepository(db);
       final now = DateTime.now();
@@ -101,6 +129,55 @@ void main() {
       );
       expect(repo.findByNormalized('run'), isNotNull);
       expect(repo.findByNormalized('run', scopeDocumentId: 1), isNull);
+    });
+  });
+
+  group('DictionaryEntry translations', () {
+    DictionaryEntry make({String? translation, List<String> alts = const []}) =>
+        DictionaryEntry(
+          id: 0,
+          term: 't',
+          sourceLang: 'en',
+          targetLang: 'uk',
+          translation: translation,
+          alternativeTranslations: alts,
+          createdAt: DateTime(2020),
+          updatedAt: DateTime(2020),
+        );
+
+    test(
+      'allTranslations is primary-first and de-dupes case-insensitively',
+      () {
+        final e = make(
+          translation: 'Cat',
+          alts: const ['cat', 'Tomcat', 'tomcat', '   '],
+        );
+        expect(e.allTranslations, ['Cat', 'Tomcat']);
+        expect(e.hasMultipleTranslations, isTrue);
+        expect(e.glossText, 'Cat');
+      },
+    );
+
+    test('a single translation is not marked as multi-variant', () {
+      final e = make(translation: 'cat');
+      expect(e.hasMultipleTranslations, isFalse);
+      expect(e.allTranslations, ['cat']);
+      expect(e.glossText, 'cat');
+    });
+
+    test('falls back to alternatives when no primary is set', () {
+      final e = make(translation: null, alts: const ['x', 'y']);
+      expect(e.glossText, 'x');
+      expect(e.allTranslations, ['x', 'y']);
+      expect(e.hasContent, isTrue);
+    });
+
+    test('no translations means no content and no gloss', () {
+      final e = make();
+      expect(e.allTranslations, isEmpty);
+      expect(e.glossText, isNull);
+      expect(e.hasMultipleTranslations, isFalse);
+      expect(e.hasContent, isFalse);
     });
   });
 
