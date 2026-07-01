@@ -495,7 +495,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         }
       }
       if (showGloss) {
-        final translation = entry.translation?.trim();
+        final translation = entry.glossText;
         if (translation != null && translation.isNotEmpty) {
           final first = o.rects.first.toRectInDocument(
             page: page,
@@ -504,7 +504,36 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           _paintGloss(canvas, first, translation, s, pageRect);
         }
       }
+      // Mark terms with more than one translation variant with a small dot at
+      // the term's top-right corner (the popup lists every variant on hover).
+      // Anchored to the last fragment so it lands at the end of a wrapped or
+      // multi-word occurrence.
+      if (entry.hasMultipleTranslations) {
+        final last = o.rects.last.toRectInDocument(
+          page: page,
+          pageRect: pageRect,
+        );
+        _paintVariantDot(canvas, last, pageRect);
+      }
     }
+  }
+
+  /// Draw the multi-variant marker: a small opaque dot just outside the word's
+  /// top-right corner, ringed in white so it stays legible over dark text or a
+  /// colored highlight fill.
+  void _paintVariantDot(Canvas canvas, Rect wordRect, Rect pageRect) {
+    final r = (wordRect.height * 0.13).clamp(1.5, 4.0);
+    final center = Offset(
+      (wordRect.right + r).clamp(pageRect.left, pageRect.right),
+      (wordRect.top + r).clamp(pageRect.top, pageRect.bottom),
+    );
+    canvas
+      ..drawCircle(center, r + 0.8, Paint()..color = const Color(0xFFFFFFFF))
+      ..drawCircle(
+        center,
+        r,
+        Paint()..color = const Color(kVariantMarkerColor),
+      );
   }
 
   void _paintGloss(

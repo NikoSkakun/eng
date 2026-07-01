@@ -270,4 +270,45 @@ void main() {
     expect(info.dictionaryCount, 1);
     db.dispose();
   });
+
+  test('export/import round-trips alternative translations', () async {
+    final srcDb = AppDatabase.inMemory();
+    final libDir = Directory(p.join(tmp.path, 'alt'))..createSync();
+    final srcDict = DictionaryRepository(srcDb);
+    final now = DateTime.now();
+    srcDict.insert(
+      DictionaryEntry(
+        id: 0,
+        term: 'chat',
+        sourceLang: 'fr',
+        targetLang: 'en',
+        translation: 'cat',
+        alternativeTranslations: const ['tomcat', 'pussycat'],
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    final zip = p.join(tmp.path, 'alt.zip');
+    await BackupService(
+      srcDict,
+      LibraryRepository(srcDb),
+      libDir.path,
+    ).exportTo(zip, includeLibrary: false, includeDictionary: true);
+
+    final dstDb = AppDatabase.inMemory();
+    final dstDict = DictionaryRepository(dstDb);
+    await BackupService(
+      dstDict,
+      LibraryRepository(dstDb),
+      libDir.path,
+    ).importFrom(zip, includeLibrary: false, includeDictionary: true);
+
+    final imported = dstDict.getAll().single;
+    expect(imported.term, 'chat');
+    expect(imported.translation, 'cat');
+    expect(imported.alternativeTranslations, ['tomcat', 'pussycat']);
+
+    srcDb.dispose();
+    dstDb.dispose();
+  });
 }

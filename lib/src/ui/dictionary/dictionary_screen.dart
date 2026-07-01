@@ -67,7 +67,7 @@ class _DictionaryScreenState extends ConsumerState<DictionaryScreen> {
               .where(
                 (e) =>
                     e.term.toLowerCase().contains(q) ||
-                    (e.translation?.toLowerCase().contains(q) ?? false),
+                    e.allTranslations.any((t) => t.toLowerCase().contains(q)),
               )
               .toList();
 
@@ -136,9 +136,9 @@ class _EntryTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final translations = entry.allTranslations;
     final subtitleParts = <String>[
-      if (entry.translation != null && entry.translation!.isNotEmpty)
-        entry.translation!,
+      if (translations.isNotEmpty) translations.join(' · '),
       if (!entry.isGlobal) 'this document only',
     ];
     return ListTile(

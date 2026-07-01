@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:sqlite3/sqlite3.dart';
 
 import '../models/dictionary_entry.dart';
@@ -53,10 +55,10 @@ class DictionaryRepository {
     _db.execute(
       '''
       INSERT INTO dictionary(
-        term, normalized_term, source_lang, target_lang, translation, definition,
-        notes, highlight_enabled, color_value, match_partial, source_word,
-        scope_document_id, created_at, updated_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?);
+        term, normalized_term, source_lang, target_lang, translation,
+        alt_translations, definition, notes, highlight_enabled, color_value,
+        match_partial, source_word, scope_document_id, created_at, updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
       ''',
       [
         entry.term,
@@ -64,6 +66,7 @@ class DictionaryRepository {
         entry.sourceLang,
         entry.targetLang,
         entry.translation,
+        _encodeAlts(entry.alternativeTranslations),
         entry.definition,
         entry.notes,
         entry.highlightEnabled ? 1 : 0,
@@ -83,9 +86,9 @@ class DictionaryRepository {
       '''
       UPDATE dictionary SET
         term = ?, normalized_term = ?, source_lang = ?, target_lang = ?,
-        translation = ?, definition = ?, notes = ?, highlight_enabled = ?,
-        color_value = ?, match_partial = ?, source_word = ?,
-        scope_document_id = ?, updated_at = ?
+        translation = ?, alt_translations = ?, definition = ?, notes = ?,
+        highlight_enabled = ?, color_value = ?, match_partial = ?,
+        source_word = ?, scope_document_id = ?, updated_at = ?
       WHERE id = ?;
       ''',
       [
@@ -94,6 +97,7 @@ class DictionaryRepository {
         entry.sourceLang,
         entry.targetLang,
         entry.translation,
+        _encodeAlts(entry.alternativeTranslations),
         entry.definition,
         entry.notes,
         entry.highlightEnabled ? 1 : 0,
@@ -111,6 +115,25 @@ class DictionaryRepository {
     _db.execute('DELETE FROM dictionary WHERE id = ?;', [id]);
   }
 
+  /// Serialize the alternative translations to a JSON array (null when empty, so
+  /// the column stays NULL rather than holding an empty `[]`).
+  static String? _encodeAlts(List<String> alts) =>
+      alts.isEmpty ? null : jsonEncode(alts);
+
+  /// Parse the stored JSON array back into a list, tolerating null/garbage.
+  static List<String> _decodeAlts(Object? raw) {
+    if (raw is! String || raw.isEmpty) return const [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        return decoded.whereType<String>().toList(growable: false);
+      }
+    } catch (_) {
+      // Corrupt value — treat as none rather than failing the whole read.
+    }
+    return const [];
+  }
+
   DictionaryEntry _fromRow(Row row) {
     return DictionaryEntry(
       id: row['id'] as int,
@@ -118,6 +141,7 @@ class DictionaryRepository {
       sourceLang: row['source_lang'] as String,
       targetLang: row['target_lang'] as String,
       translation: row['translation'] as String?,
+      alternativeTranslations: _decodeAlts(row['alt_translations']),
       definition: row['definition'] as String?,
       notes: row['notes'] as String?,
       highlightEnabled: (row['highlight_enabled'] as int) != 0,

@@ -13,6 +13,7 @@ class DictionaryEntry {
     required this.sourceLang,
     required this.targetLang,
     this.translation,
+    this.alternativeTranslations = const [],
     this.definition,
     this.notes,
     this.highlightEnabled = true,
@@ -39,8 +40,13 @@ class DictionaryEntry {
   /// Language of [translation] (the native language), ISO 639-1.
   final String targetLang;
 
-  /// User-confirmed (or suggested-then-kept) translation.
+  /// User-confirmed (or suggested-then-kept) primary translation.
   final String? translation;
+
+  /// Additional accepted translations for the same term, shown alongside the
+  /// primary one and used to mark the term as having several variants. Order is
+  /// the user's; never null (empty when there are none).
+  final List<String> alternativeTranslations;
 
   /// User definition or a looked-up monolingual definition.
   final String? definition;
@@ -74,9 +80,32 @@ class DictionaryEntry {
 
   bool get isGlobal => scopeDocumentId == null;
 
+  /// Every translation to display, primary first, trimmed and de-duplicated
+  /// case-insensitively (empties removed). Falls back to the alternatives when
+  /// no primary is set, so display code never has to special-case that.
+  List<String> get allTranslations {
+    final out = <String>[];
+    final seen = <String>{};
+    for (final t in [?translation, ...alternativeTranslations]) {
+      final s = t.trim();
+      if (s.isEmpty) continue;
+      if (seen.add(s.toLowerCase())) out.add(s);
+    }
+    return out;
+  }
+
+  /// Whether the term carries more than one translation variant — the signal
+  /// used to mark it in the readers.
+  bool get hasMultipleTranslations => allTranslations.length > 1;
+
+  /// The single translation to render inline (interlinear gloss): the primary.
+  String? get glossText {
+    final all = allTranslations;
+    return all.isEmpty ? null : all.first;
+  }
+
   bool get hasContent =>
-      (translation?.trim().isNotEmpty ?? false) ||
-      (definition?.trim().isNotEmpty ?? false);
+      allTranslations.isNotEmpty || (definition?.trim().isNotEmpty ?? false);
 
   DictionaryEntry copyWith({
     int? id,
@@ -84,6 +113,7 @@ class DictionaryEntry {
     String? sourceLang,
     String? targetLang,
     Object? translation = _sentinel,
+    List<String>? alternativeTranslations,
     Object? definition = _sentinel,
     Object? notes = _sentinel,
     bool? highlightEnabled,
@@ -102,6 +132,8 @@ class DictionaryEntry {
       translation: translation == _sentinel
           ? this.translation
           : translation as String?,
+      alternativeTranslations:
+          alternativeTranslations ?? this.alternativeTranslations,
       definition: definition == _sentinel
           ? this.definition
           : definition as String?,
