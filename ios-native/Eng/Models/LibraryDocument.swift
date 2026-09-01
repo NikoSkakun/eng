@@ -13,13 +13,18 @@ struct LibraryDocument: Identifiable, Equatable {
     var pageCount: Int
     var addedAt: Date
     var lastOpenedAt: Date?
-    /// 1-based page the reader should resume on (fallback when `viewState` is absent).
+    /// 1-based page the reader should resume on (fallback when there's no view state).
     var lastPage: Int = 1
-    /// Exact reading position + zoom, restored verbatim on the next open.
-    var viewState: DocumentViewState? = nil
+    /// Raw JSON in the `view_matrix` column — decoded per format via the accessors below.
+    var viewMatrix: String? = nil
 
     /// Absolute URL of the managed copy, resolved against the current container.
     var fileURL: URL { AppPaths.libraryDirectory.appendingPathComponent(fileName) }
+
+    /// PDF saved view (nil for EPUBs — their JSON shape doesn't decode to this).
+    var pdfViewState: DocumentViewState? { DocumentViewState.from(json: viewMatrix) }
+    /// EPUB saved position + zoom (nil for PDFs).
+    var epubViewState: EpubViewState? { EpubViewState.from(json: viewMatrix) }
 }
 
 /// The reader's exact view of a document: the current page, the top-left point of
@@ -48,6 +53,27 @@ struct DocumentViewState: Codable, Equatable {
     static func from(json: String?) -> DocumentViewState? {
         guard let json else { return nil }
         return try? JSONDecoder().decode(DocumentViewState.self, from: Data(json.utf8))
+    }
+}
+
+/// The reflowable (EPUB) reader's saved state: reading position (top-visible
+/// character offset) and the font size it was read at — the reflow equivalent of
+/// PDF "zoom" — plus a 0…1 progress for the library. Stored as JSON in the same
+/// `view_matrix` column; its required keys make it decode-distinct from
+/// `DocumentViewState`, so each format's accessor returns nil for the other's JSON.
+struct EpubViewState: Codable, Equatable {
+    var v: Int = 1
+    var charOffset: Int
+    var fontSize: Double
+    var progress: Double = 0
+
+    var json: String? {
+        guard let data = try? JSONEncoder().encode(self) else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+    static func from(json: String?) -> EpubViewState? {
+        guard let json else { return nil }
+        return try? JSONDecoder().decode(EpubViewState.self, from: Data(json.utf8))
     }
 }
 

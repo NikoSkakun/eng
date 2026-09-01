@@ -87,6 +87,9 @@ struct LibraryView: View {
         case .epub:
             parts.append("EPUB")
             if doc.pageCount > 0 { parts.append("\(doc.pageCount) chapters") }
+            if let p = doc.epubViewState?.progress, p > 0.01 {
+                parts.append("\(Int((p * 100).rounded()))% read")
+            }
         }
         return parts.joined(separator: " · ")
     }

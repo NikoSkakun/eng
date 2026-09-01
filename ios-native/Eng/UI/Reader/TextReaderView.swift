@@ -14,6 +14,7 @@ struct TextReaderView: View {
     @StateObject private var coord = TextReaderCoordinator()
     @State private var addSeed: TextSeed?
     @State private var showStyle = false
+    @State private var showTOC = false
 
     var body: some View {
         NavigationStack {
@@ -67,7 +68,11 @@ struct TextReaderView: View {
                 ToolbarItem(placement: .principal) {
                     Text(coord.progressLabel).font(.footnote).foregroundStyle(.secondary)
                 }
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    if coord.hasChapters {
+                        Button { showTOC = true } label: { Image(systemName: "list.bullet") }
+                            .disabled(coord.loading)
+                    }
                     Button { showStyle = true } label: { Image(systemName: "textformat.size") }
                         .disabled(coord.loading)
                 }
@@ -80,6 +85,33 @@ struct TextReaderView: View {
         .sheet(item: $addSeed) { seed in AddEntrySheet(seedText: seed.text, documentId: document.id) }
         .sheet(isPresented: $showStyle) {
             ReadingSettingsSheet().presentationDetents([.height(430), .large])
+        }
+        .sheet(isPresented: $showTOC) {
+            ChaptersSheet(chapters: coord.chapters) { coord.jumpToChapter($0) }
+        }
+    }
+}
+
+/// Table of contents — jump to a chapter.
+struct ChaptersSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let chapters: [ChapterRef]
+    let onSelect: (ChapterRef) -> Void
+
+    var body: some View {
+        NavigationStack {
+            List(Array(chapters.enumerated()), id: \.offset) { i, ch in
+                Button {
+                    onSelect(ch); dismiss()
+                } label: {
+                    Text(ch.title.isEmpty ? "Chapter \(i + 1)" : ch.title)
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                }
+            }
+            .navigationTitle("Chapters")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
     }
 }
@@ -118,6 +150,8 @@ final class TextReaderCoordinator: NSObject, ObservableObject {
     @Published var title: String?
     @Published var progressLabel = ""
     @Published var theme: ReaderTheme = .system
+    @Published var chapters: [ChapterRef] = []
+    var hasChapters: Bool { chapters.count > 1 }
 
     private weak var app: AppState?
     private var document: LibraryDocument?
@@ -149,9 +183,18 @@ final class TextReaderCoordinator: NSObject, ObservableObject {
             DispatchQueue.main.async { self?.onScroll(y) }
         }
 
-        // Restore to the saved character offset (stored in `lastPage`) if the book
-        // has been opened before; otherwise start at the top.
-        pendingOffset = (document.lastOpenedAt != nil) ? max(0, document.lastPage) : nil
+        // Restore the saved reading position and "zoom" (font size). Apply the
+        // saved size to the (global) reading settings first so the book reopens at
+        // the size it was read; loading is still true, so no premature reflow.
+        if let saved = document.epubViewState {
+            pendingOffset = max(0, saved.charOffset)
+            if saved.fontSize >= kReaderFontSizeRange.lowerBound && saved.fontSize <= kReaderFontSizeRange.upperBound {
+                app.mutateSettings { $0.readerFontSize = saved.fontSize }
+            }
+        } else {
+            // Older builds stored just the char offset in `lastPage`.
+            pendingOffset = (document.lastOpenedAt != nil) ? max(0, document.lastPage) : nil
+        }
 
         let url = document.fileURL
         Task { [weak self] in
@@ -176,10 +219,13 @@ final class TextReaderCoordinator: NSObject, ObservableObject {
         guard let content, let app, let document else { return }
         theme = app.settings.readerTheme
         matcher = app.matcher(documentId: document.id)
-        let r = BookRenderer.render(content, settings: app.settings, matcher: matcher) { [weak self] id in
+        let inset = app.settings.readerMargin.inset
+        let usable = (textView.bounds.width > 0 ? textView.bounds.width : UIScreen.main.bounds.width) - inset * 2
+        let r = BookRenderer.render(content, settings: app.settings, matcher: matcher, contentWidth: usable) { [weak self] id in
             self?.color(forEntry: id) ?? UIColor(argb: kDefaultHighlightColor)
         }
         rendered = r
+        chapters = r.chapters
         textView.attributedText = r.attributed
         applyStyleChrome()
         restored = false
@@ -202,8 +248,15 @@ final class TextReaderCoordinator: NSObject, ObservableObject {
 
     func saveProgress() {
         guard restored, let app, let document else { return }
-        app.saveProgress(documentId: document.id, page: topVisibleCharOffset(), viewState: nil)
+        let off = topVisibleCharOffset()
+        let len = rendered?.length ?? 0
+        let state = EpubViewState(charOffset: off, fontSize: app.settings.readerFontSize,
+                                  progress: len > 0 ? Double(off) / Double(len) : 0)
+        app.saveProgress(documentId: document.id, page: off, viewMatrix: state.json)
     }
+
+    /// Jump to a chapter (from the TOC), scrolling smoothly.
+    func jumpToChapter(_ ref: ChapterRef) { wordPopup = nil; scroll(toCharOffset: ref.offset, animated: true) }
 
     private func onScroll(_ y: CGFloat) {
         updateProgress()
@@ -226,14 +279,14 @@ final class TextReaderCoordinator: NSObject, ObservableObject {
         return textView.layoutManager.characterIndexForGlyph(at: glyph)
     }
 
-    private func scroll(toCharOffset offset: Int) {
+    private func scroll(toCharOffset offset: Int, animated: Bool = false) {
         let len = textView.textStorage.length
         guard len > 0 else { return }
-        if offset <= 0 { textView.setContentOffset(.init(x: 0, y: -textView.adjustedContentInset.top), animated: false); return }
+        if offset <= 0 { textView.setContentOffset(.init(x: 0, y: -textView.adjustedContentInset.top), animated: animated); return }
         let rect = contentRect(forCharRange: NSRange(location: min(offset, len - 1), length: 1))
         let maxY = max(-textView.adjustedContentInset.top, textView.contentSize.height - textView.bounds.height + textView.adjustedContentInset.bottom)
         let y = min(max(rect.minY - textView.textContainerInset.top, -textView.adjustedContentInset.top), maxY)
-        textView.setContentOffset(.init(x: 0, y: y), animated: false)
+        textView.setContentOffset(.init(x: 0, y: y), animated: animated)
     }
 
     /// Bounding rect of a character range in the text view's CONTENT coordinates.
@@ -265,6 +318,8 @@ final class TextReaderCoordinator: NSObject, ObservableObject {
         guard contentRect(forCharRange: NSRange(location: idx, length: 1)).insetBy(dx: -6, dy: -4).contains(loc) else {
             wordPopup = nil; return
         }
+        // A hyperlink wins over a highlight (explicit navigation intent).
+        if let link = linkContaining(idx) ?? linkContaining(idx - 1) { wordPopup = nil; follow(link.href); return }
         guard let span = spanContaining(idx) ?? spanContaining(idx - 1) else { wordPopup = nil; return }
         var r = contentRect(forCharRange: span.range)
         r.origin.y -= textView.contentOffset.y      // content -> visible
@@ -278,6 +333,28 @@ final class TextReaderCoordinator: NSObject, ObservableObject {
         guard idx >= 0, let spans = rendered?.spans else { return nil }
         return spans.filter { $0.range.location <= idx && idx < $0.range.location + $0.range.length }
                     .min { $0.range.length < $1.range.length }
+    }
+
+    private func linkContaining(_ idx: Int) -> LinkSpan? {
+        guard idx >= 0, let links = rendered?.links else { return nil }
+        return links.first { $0.range.location <= idx && idx < $0.range.location + $0.range.length }
+    }
+
+    /// Follow a link: open external URLs in the browser; navigate internal ones
+    /// (an anchor id, or another chapter file) within the book.
+    private func follow(_ href: String) {
+        let scheme = URL(string: href)?.scheme?.lowercased()
+        if scheme == "http" || scheme == "https" || scheme == "mailto" {
+            if let url = URL(string: href) { UIApplication.shared.open(url) }
+            return
+        }
+        guard let rendered else { return }
+        let fragment = href.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).count > 1
+            ? String(href.split(separator: "#", maxSplits: 1)[1]) : nil
+        let pathPart = String(href.split(separator: "#", maxSplits: 1)[0])
+        if let fragment, let off = rendered.anchors[fragment] { scroll(toCharOffset: off, animated: true); return }
+        let file = (pathPart as NSString).lastPathComponent
+        if let off = rendered.chapterStarts[file] { scroll(toCharOffset: off, animated: true) }
     }
 }
 

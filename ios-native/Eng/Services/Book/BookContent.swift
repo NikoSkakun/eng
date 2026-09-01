@@ -1,26 +1,50 @@
 import Foundation
 
-/// One block of reflowed text — a paragraph or a heading. Every reflowable
-/// parser normalizes its format into a list of these, so the text reader only
-/// needs to understand `BookContent` (mirrors the Flutter app's `BookBlock`).
+/// A run of text with inline styling (from `<b>/<i>/<a>` …). The renderer maps
+/// these to font traits, link attributes, etc.
+struct InlineRun {
+    var text: String
+    var bold = false
+    var italic = false
+    /// Raw href from an `<a>` (resolved to a target at render time), or nil.
+    var link: String?
+}
+
+/// One block of reflowed content — a paragraph, heading, list item, blockquote,
+/// image, or a chapter boundary. Every reflowable parser normalizes into these.
 struct BookBlock {
     enum Kind {
         case heading1, heading2, heading3
         case paragraph
-        /// A chapter boundary (start of a new spine item) — rendered as spacing.
+        case blockquote
+        case listItem
+        case image
+        /// Start of a new spine item — rendered as spacing; anchors chapter jumps.
         case chapterBreak
 
         var isHeading: Bool { self == .heading1 || self == .heading2 || self == .heading3 }
     }
 
-    let kind: Kind
-    let text: String
+    var kind: Kind
+    var runs: [InlineRun] = []
+    /// Element ids within this block, for internal (#anchor) link targets.
+    var anchorIds: [String] = []
+    /// Image blocks: raw `src` (set by the HTML parser) then loaded bytes
+    /// (resolved + filled by `EpubParser`).
+    var imageSrc: String? = nil
+    var imageData: Data? = nil
+    /// List items: whether the enclosing list is ordered.
+    var listOrdered = false
+    var listIndex = 0
+    /// chapterBreak markers: the spine file this chapter came from (for the TOC).
+    var chapterFile: String? = nil
+
+    /// Plain concatenated text — what the term matcher runs over.
+    var plainText: String { runs.map(\.text).joined() }
 }
 
-/// A parsed reflowable document: its blocks in reading order plus a title.
+/// A parsed reflowable document: blocks in reading order plus a title.
 struct BookContent {
     let title: String?
     let blocks: [BookBlock]
-
-    var isEmpty: Bool { blocks.allSatisfy { $0.text.isEmpty && $0.kind != .chapterBreak } }
 }

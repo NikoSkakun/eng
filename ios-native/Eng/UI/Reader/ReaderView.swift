@@ -217,7 +217,7 @@ final class ReaderCoordinator: NSObject, ObservableObject {
 
         // Restore the exact saved view (page + position + zoom), or fall back to
         // the last page, once the view has real bounds.
-        let saved = document.viewState
+        let saved = document.pdfViewState
         let fallbackPage = max(0, min(document.lastPage - 1, doc.pageCount - 1))
         pdfView.onFirstLayout = { [weak self] in
             self?.restoreView(saved, fallbackPage: fallbackPage)
@@ -270,7 +270,7 @@ final class ReaderCoordinator: NSObject, ObservableObject {
         guard restored, let app, let document, let page = pdfView.currentPage, let doc = pdfDocument else { return }
         app.saveProgress(documentId: document.id,
                          page: doc.index(for: page) + 1,
-                         viewState: captureViewState())
+                         viewMatrix: captureViewState()?.json)
     }
 
     /// The exact current view: page + top-left visible point (page space) + zoom.

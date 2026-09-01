@@ -125,12 +125,12 @@ final class AppState: ObservableObject {
         try? library.rename(id: doc.id, title: title); reloadDocuments()
     }
 
-    func saveProgress(documentId: Int64, page: Int, viewState: DocumentViewState?) {
-        try? library.updateProgress(id: documentId, lastPage: page, viewState: viewState)
+    func saveProgress(documentId: Int64, page: Int, viewMatrix: String?) {
+        try? library.updateProgress(id: documentId, lastPage: page, viewMatrix: viewMatrix)
         if let i = documents.firstIndex(where: { $0.id == documentId }) {
             documents[i].lastPage = page
             documents[i].lastOpenedAt = Date()
-            documents[i].viewState = viewState
+            documents[i].viewMatrix = viewMatrix
         }
     }
 

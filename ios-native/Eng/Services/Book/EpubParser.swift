@@ -30,16 +30,26 @@ enum EpubParser {
         // spine order: idref list
         let spine = allMatches(opf, #"<itemref\b([^>]*)>"#).compactMap { attr($0, "idref") }
 
-        // 3. Each spine item -> resolved zip path -> blocks.
+        // 3. Each spine item -> resolved zip path -> blocks (+ inline images).
         var blocks: [BookBlock] = []
-        for (i, idref) in spine.enumerated() {
+        for idref in spine {
             guard let href = hrefById[idref] else { continue }
             let path = resolve(href, relativeTo: opfDir)
             guard let xhtml = zip.utf8(path) else { continue }
-            if i > 0 { blocks.append(BookBlock(kind: .chapterBreak, text: "")) }
-            blocks.append(contentsOf: HtmlText.blocks(from: xhtml))
+            let chapterDir = (path as NSString).deletingLastPathComponent
+            var chapterBlocks = HtmlParser.parse(xhtml)
+            for j in chapterBlocks.indices where chapterBlocks[j].kind == .image {
+                if let src = chapterBlocks[j].imageSrc {
+                    let data = zip.data(for: resolve(src, relativeTo: chapterDir))
+                    // Cap image size to avoid loading a whole book's art into memory.
+                    chapterBlocks[j].imageData = (data?.count ?? 0) <= 12_000_000 ? data : nil
+                }
+            }
+            chapterBlocks.removeAll { $0.kind == .image && $0.imageData == nil }
+            blocks.append(BookBlock(kind: .chapterBreak, chapterFile: (path as NSString).lastPathComponent))
+            blocks.append(contentsOf: chapterBlocks)
         }
-        guard !blocks.isEmpty else { return nil }
+        guard blocks.contains(where: { $0.kind != .chapterBreak }) else { return nil }
         return BookContent(title: title?.isEmpty == false ? title : nil, blocks: blocks)
     }
 

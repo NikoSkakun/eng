@@ -14,7 +14,7 @@ struct LibraryRepository {
             addedAt: r.date(5),
             lastOpenedAt: r.optDate(6),
             lastPage: r.int(7),
-            viewState: DocumentViewState.from(json: r.optString(8)))
+            viewMatrix: r.optString(8))
     }
 
     private static let columns = "id, title, file_name, original_path, page_count, added_at, last_opened_at, last_page, view_matrix"
@@ -32,9 +32,9 @@ struct LibraryRepository {
             """, [d.title, d.fileName, d.originalPath, d.pageCount, d.addedAt, d.lastOpenedAt, d.lastPage])
     }
 
-    func updateProgress(id: Int64, lastPage: Int, viewState: DocumentViewState?) throws {
+    func updateProgress(id: Int64, lastPage: Int, viewMatrix: String?) throws {
         try db.run("UPDATE documents SET last_page=?, last_opened_at=?, view_matrix=? WHERE id=?;",
-                   [lastPage, Date(), viewState?.json, id])
+                   [lastPage, Date(), viewMatrix, id])
     }
 
     func rename(id: Int64, title: String) throws {
