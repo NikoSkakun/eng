@@ -1,0 +1,11 @@
+build/
+DerivedData/
+.DS_Store
+*.ipa
+*.mobileprovision
+tools/ota/secrets.env
+*.p8
+*.p12
+xcuserdata/
+*.xcuserstate
+.DS_Store
