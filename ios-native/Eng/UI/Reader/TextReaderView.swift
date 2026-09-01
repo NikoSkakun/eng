@@ -255,8 +255,8 @@ final class TextReaderCoordinator: NSObject, ObservableObject {
         app.saveProgress(documentId: document.id, page: off, viewMatrix: state.json)
     }
 
-    /// Jump to a chapter (from the TOC), scrolling smoothly.
-    func jumpToChapter(_ ref: ChapterRef) { wordPopup = nil; scroll(toCharOffset: ref.offset, animated: true) }
+    /// Jump to a chapter (from the TOC). Instant — a big animated jump is jarring.
+    func jumpToChapter(_ ref: ChapterRef) { wordPopup = nil; scroll(toCharOffset: ref.offset) }
 
     private func onScroll(_ y: CGFloat) {
         updateProgress()
@@ -292,6 +292,10 @@ final class TextReaderCoordinator: NSObject, ObservableObject {
     /// Bounding rect of a character range in the text view's CONTENT coordinates.
     private func contentRect(forCharRange range: NSRange) -> CGRect {
         let glyphRange = textView.layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        // `boundingRect` returns the CURRENTLY laid-out bounds; for an off-screen
+        // target (a link/chapter jump in a large book) layout may not have reached
+        // it, giving a wrong rect. Force it first.
+        textView.layoutManager.ensureLayout(forGlyphRange: glyphRange)
         var r = textView.layoutManager.boundingRect(forGlyphRange: glyphRange, in: textView.textContainer)
         r.origin.x += textView.textContainerInset.left
         r.origin.y += textView.textContainerInset.top
@@ -307,9 +311,11 @@ final class TextReaderCoordinator: NSObject, ObservableObject {
 
     // MARK: tap
 
-    @objc private func handleTap(_ gr: UITapGestureRecognizer) {
+    @objc private func handleTap(_ gr: UITapGestureRecognizer) { handleTap(at: gr.location(in: textView)) }
+
+    /// `loc` is in the text view's CONTENT coordinate space.
+    func handleTap(at loc: CGPoint) {
         guard let rendered, textView.textStorage.length > 0 else { wordPopup = nil; return }
-        let loc = gr.location(in: textView)   // content coordinates
         let inset = textView.textContainerInset
         let cp = CGPoint(x: loc.x - inset.left, y: loc.y - inset.top)
         let glyph = textView.layoutManager.glyphIndex(for: cp, in: textView.textContainer)
@@ -343,18 +349,40 @@ final class TextReaderCoordinator: NSObject, ObservableObject {
     /// Follow a link: open external URLs in the browser; navigate internal ones
     /// (an anchor id, or another chapter file) within the book.
     private func follow(_ href: String) {
-        let scheme = URL(string: href)?.scheme?.lowercased()
-        if scheme == "http" || scheme == "https" || scheme == "mailto" {
-            if let url = URL(string: href) { UIApplication.shared.open(url) }
-            return
+        if let ext = externalURL(href) { UIApplication.shared.open(ext); return }
+        if let off = internalTarget(href) { wordPopup = nil; scroll(toCharOffset: off) }
+    }
+
+    private func externalURL(_ href: String) -> URL? {
+        guard let scheme = URL(string: href)?.scheme?.lowercased(),
+              ["http", "https", "mailto", "tel"].contains(scheme), let url = URL(string: href) else { return nil }
+        return url
+    }
+
+    /// Resolve an internal link to a character offset. Tries the fragment against
+    /// the anchor map first, then the file part against the chapter map (by
+    /// filename), percent-decoding and ignoring case for robustness.
+    func internalTarget(_ href: String) -> Int? {
+        guard let rendered else { return nil }
+        let decoded = href.removingPercentEncoding ?? href
+        let hashParts = decoded.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
+        let pathPart = String(hashParts.first ?? "")
+        let fragment = hashParts.count > 1 ? String(hashParts[1]) : nil
+
+        if let fragment, !fragment.isEmpty {
+            if let off = rendered.anchors[fragment] { return off }
+            if let key = rendered.anchors.keys.first(where: { $0.caseInsensitiveCompare(fragment) == .orderedSame }) {
+                return rendered.anchors[key]
+            }
         }
-        guard let rendered else { return }
-        let fragment = href.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).count > 1
-            ? String(href.split(separator: "#", maxSplits: 1)[1]) : nil
-        let pathPart = String(href.split(separator: "#", maxSplits: 1)[0])
-        if let fragment, let off = rendered.anchors[fragment] { scroll(toCharOffset: off, animated: true); return }
         let file = (pathPart as NSString).lastPathComponent
-        if let off = rendered.chapterStarts[file] { scroll(toCharOffset: off, animated: true) }
+        if !file.isEmpty {
+            if let off = rendered.chapterStarts[file] { return off }
+            if let key = rendered.chapterStarts.keys.first(where: { $0.caseInsensitiveCompare(file) == .orderedSame }) {
+                return rendered.chapterStarts[key]
+            }
+        }
+        return nil
     }
 }
 
