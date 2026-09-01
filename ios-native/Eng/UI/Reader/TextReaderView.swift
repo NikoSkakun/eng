@@ -229,8 +229,12 @@ final class TextReaderCoordinator: NSObject, ObservableObject {
         textView.attributedText = r.attributed
         applyStyleChrome()
         restored = false
-        // Layout must exist before we can scroll to a character; force it, then jump.
-        textView.layoutIfNeeded()
+        // FULL layout before scrolling. `layoutIfNeeded` only lays out part of a
+        // large book, leaving contentSize too small; UITextView then resets
+        // contentOffset as its background layout finishes — so a restore/jump was
+        // silently bounced back to the top. `ensureLayout(for:)` lays out the whole
+        // book so contentSize is final and the scroll sticks.
+        textView.layoutManager.ensureLayout(for: textView.textContainer)
         scroll(toCharOffset: offset)
         restored = true
         updateProgress()
@@ -270,13 +274,20 @@ final class TextReaderCoordinator: NSObject, ObservableObject {
         progressLabel = "\(min(max(pct, 0), 100))%"
     }
 
-    /// Character index at the top-left of the visible area (content coordinates).
+    /// Character index at the top of the visible area. Uses
+    /// `glyphRange(forBoundingRect:)`, which FORCES layout of that region — plain
+    /// `glyphIndex(for:)` only sees already-laid-out glyphs and returns 0 for a
+    /// position whose layout isn't finished yet (large book), which was silently
+    /// saving position 0 and reopening every book at the start.
     private func topVisibleCharOffset() -> Int {
-        guard textView.textStorage.length > 0 else { return 0 }
+        let len = textView.textStorage.length
+        guard len > 0 else { return 0 }
         let inset = textView.textContainerInset
-        let p = CGPoint(x: 2, y: max(0, textView.contentOffset.y - inset.top) + 2)
-        let glyph = textView.layoutManager.glyphIndex(for: p, in: textView.textContainer)
-        return textView.layoutManager.characterIndexForGlyph(at: glyph)
+        let top = max(0, textView.contentOffset.y - inset.top)
+        let rect = CGRect(x: 0, y: top, width: max(1, textView.textContainer.size.width), height: max(1, textView.bounds.height))
+        let glyphRange = textView.layoutManager.glyphRange(forBoundingRect: rect, in: textView.textContainer)
+        let idx = textView.layoutManager.characterIndexForGlyph(at: glyphRange.location)
+        return min(max(0, idx), len - 1)
     }
 
     private func scroll(toCharOffset offset: Int, animated: Bool = false) {
