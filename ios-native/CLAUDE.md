@@ -2,7 +2,7 @@
 
 Guidance for Claude Code working in this repo.
 
-`eng-ios` is a native **SwiftUI + PDFKit** iPhone app: a **PDF-only** port of the
+`eng-ios` is a native **SwiftUI + PDFKit** iPhone app: a **PDF + EPUB** port of the
 Flutter app at `../eng` — a foreign-language reader with an auto-highlighting
 vocabulary dictionary and inline translations. Min deployment target **iOS 17.0**.
 
@@ -49,14 +49,34 @@ and `characterIndex(at:)`. Any length-changing transform (diacritic stripping,
 ligature expansion) would desync highlights from the rendered glyphs. `normalizeKey`
 (dedup/lookup only) is free to collapse whitespace.
 
-### Reader (`UI/Reader/ReaderView.swift`)
+### Formats & the two readers
 
-`ReaderCoordinator` owns the `PDFView`, computes `findMatches` per page (lazy,
-cached by page index), turns each match into a `PDFSelection`, and paints them
-via `pdfView.highlightedSelections` (non-destructive). A tap gesture hit-tests
-`characterIndex(at:)` → the most specific covering match → opens the popup;
-`PDFViewSelectionChanged` surfaces the current selection for the **Add** sheet.
-Rebuild happens on `AppState.dictionaryRevision` changes.
+`DocumentFormat` (derived from the file extension) picks the reader:
+
+- **PDF** → `UI/Reader/ReaderView.swift`. `ReaderCoordinator` owns the `PDFView`,
+  computes `findMatches` per page (lazy, cached), turns each match into a
+  `PDFSelection`, and paints them via `pdfView.highlightedSelections`. A tap
+  hit-tests `characterIndex(at:)` → most specific covering match → callout;
+  `PDFViewSelectionChanged` surfaces the selection for the **Add** sheet.
+- **EPUB** → `UI/Reader/TextReaderView.swift` (reflowable). Parsing lives in
+  `Services/Book/`: `Zip.swift` (minimal ZIP reader, inflating raw DEFLATE with
+  the system **Compression** framework — no packages), `HtmlText.swift`
+  (XHTML → `BookBlock`s), `EpubParser.swift` (container → OPF spine → `BookContent`).
+  `BookRenderer` builds one styled `NSAttributedString` and paints highlights
+  (offsets are UTF-16, matching `NSRange`). A **TextKit 1** `UITextView` gives
+  predictable `layoutManager` coordinates for tap hit-testing and word rects.
+  Reading position is the top-visible character offset, stored in `last_page`.
+
+Both readers share `WordTranslationPopup` (the tap callout) and `AddEntrySheet`,
+and rebuild on `AppState.dictionaryRevision` changes.
+
+### Reading customization
+
+The EPUB reader's appearance (theme / typeface / size / line spacing / margins /
+justify — see `Models/ReaderStyle.swift`) lives in `AppSettings`, persists via
+`SettingsStore`, and is edited live in `ReadingSettingsSheet`. Changes go through
+`AppState.mutateSettings` (which bumps `dictionaryRevision`); `TextReaderView`
+observes that and re-renders in place, preserving the reading position.
 
 ### Persistence
 
@@ -70,9 +90,11 @@ container path changing between installs.
 
 ## OTA deploy specifics
 
-- Signs `com.coloristique.eng` against team **GH6HRY4EWZ**'s **wildcard App ID**
-  (`*`) with an **ad-hoc** profile (`tools/ota/mint_ota_profile.py`), scoped to
-  the owner's iPhone by default. No new App ID is registered.
+- Signs `com.coloristique.eng` (its own **explicit** App ID — ad-hoc needs one; a
+  wildcard App ID will not install) against team **GH6HRY4EWZ** with an **ad-hoc**
+  profile (`tools/ota/mint_ota_profile.py`). The profile **must list the target
+  device** or the install fails ("integrity could not be verified") — pass
+  `OTA_MINT_ARGS="--udid <udid>"` (device "13" = `00008110-001564EA119A201E`).
 - Reuses `../../dev/namapi` tooling via `NAMAPI_TOOLS`: `secrets.env` (ASC key +
   dist `.p12`) and `setup_signing.sh` (keychain import + partition list).
 - Transport is `tailscale serve` (this Mac = `air.tailb321be.ts.net`). Running a

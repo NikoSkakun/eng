@@ -91,7 +91,7 @@ final class AppState: ObservableObject {
 
     func reloadDocuments() { documents = (try? library.fetchAll()) ?? [] }
 
-    /// Copy a picked PDF into the managed library and register it.
+    /// Copy a picked PDF or EPUB into the managed library and register it.
     @discardableResult
     func importDocument(from source: URL) throws -> LibraryDocument {
         let needsStop = source.startAccessingSecurityScopedResource()
@@ -101,9 +101,14 @@ final class AppState: ObservableObject {
         let dest = uniqueDestination(for: source.lastPathComponent)
         try FileManager.default.copyItem(at: source, to: dest)
 
-        let pageCount = PDFDocumentInfo.pageCount(at: dest)
+        // pageCount = PDF pages, or EPUB chapter (spine) count.
+        let count: Int
+        switch DocumentFormat.forPath(dest) ?? .pdf {
+        case .pdf: count = PDFDocumentInfo.pageCount(at: dest)
+        case .epub: count = EpubParser.chapterCount(fileURL: dest)
+        }
         var doc = LibraryDocument(id: 0, title: baseName, fileName: dest.lastPathComponent,
-                                  originalPath: source.path, pageCount: pageCount,
+                                  originalPath: source.path, pageCount: count,
                                   addedAt: Date(), lastOpenedAt: nil, lastPage: 1)
         doc.id = try library.insert(doc)
         reloadDocuments()

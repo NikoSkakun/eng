@@ -15,6 +15,12 @@ struct SettingsStore {
         static let highlighting = "highlightingEnabled"
         static let autoSuggest = "autoSuggestEnabled"
         static let highlightColor = "highlightColor"
+        static let readerFont = "readerFont"
+        static let readerFontSize = "readerFontSize"
+        static let readerLineSpacing = "readerLineSpacing"
+        static let readerTheme = "readerTheme"
+        static let readerMargin = "readerMargin"
+        static let readerJustified = "readerJustified"
     }
 
     func load() -> AppSettings {
@@ -27,6 +33,14 @@ struct SettingsStore {
         if defaults.object(forKey: Key.highlighting) != nil { s.highlightingEnabled = defaults.bool(forKey: Key.highlighting) }
         if defaults.object(forKey: Key.autoSuggest) != nil { s.autoSuggestEnabled = defaults.bool(forKey: Key.autoSuggest) }
         if defaults.object(forKey: Key.highlightColor) != nil { s.highlightColor = defaults.integer(forKey: Key.highlightColor) }
+        if let v = defaults.string(forKey: Key.readerFont), let f = ReaderFont(rawValue: v) { s.readerFont = f }
+        if defaults.object(forKey: Key.readerFontSize) != nil {
+            s.readerFontSize = min(max(defaults.double(forKey: Key.readerFontSize), kReaderFontSizeRange.lowerBound), kReaderFontSizeRange.upperBound)
+        }
+        if defaults.object(forKey: Key.readerLineSpacing) != nil { s.readerLineSpacing = defaults.double(forKey: Key.readerLineSpacing) }
+        if let v = defaults.string(forKey: Key.readerTheme), let t = ReaderTheme(rawValue: v) { s.readerTheme = t }
+        if let v = defaults.string(forKey: Key.readerMargin), let m = ReaderMargin(rawValue: v) { s.readerMargin = m }
+        if defaults.object(forKey: Key.readerJustified) != nil { s.readerJustified = defaults.bool(forKey: Key.readerJustified) }
         return s
     }
 
@@ -39,5 +53,11 @@ struct SettingsStore {
         defaults.set(s.highlightingEnabled, forKey: Key.highlighting)
         defaults.set(s.autoSuggestEnabled, forKey: Key.autoSuggest)
         defaults.set(s.highlightColor, forKey: Key.highlightColor)
+        defaults.set(s.readerFont.rawValue, forKey: Key.readerFont)
+        defaults.set(s.readerFontSize, forKey: Key.readerFontSize)
+        defaults.set(s.readerLineSpacing, forKey: Key.readerLineSpacing)
+        defaults.set(s.readerTheme.rawValue, forKey: Key.readerTheme)
+        defaults.set(s.readerMargin.rawValue, forKey: Key.readerMargin)
+        defaults.set(s.readerJustified, forKey: Key.readerJustified)
     }
 }

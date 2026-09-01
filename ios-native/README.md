@@ -6,8 +6,10 @@ translation/definition, and the app **auto-highlights every occurrence** across
 the document and (by default) your whole library. Tap a highlight for a popup;
 manage everything in the Dictionary tab.
 
-This port is **PDF-only** — the reflowable formats (EPUB/MOBI/FB2/TXT/HTML/MD/RTF)
-from the Flutter app are intentionally dropped.
+This port reads **PDF and EPUB**. PDFs use the page-faithful PDFKit reader; EPUBs
+open in a **reflowable text reader** with a customizable reading view (theme,
+typeface, size, spacing, margins, justification). The remaining Flutter formats
+(MOBI/FB2/TXT/HTML/MD/RTF) are intentionally out of scope.
 
 > Defaults are tuned for a Ukrainian speaker learning English (English →
 > Ukrainian); the language pair and providers are configurable in Settings.

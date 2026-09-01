@@ -77,7 +77,7 @@ struct TextSeed: Identifiable { let id = UUID(); let text: String }
 struct WordPopup: Equatable { let id = UUID(); let entryId: Int64; let rect: CGRect }
 
 /// Small translation callout shown above (or below, near the top) a tapped word.
-private struct WordTranslationPopup: View {
+struct WordTranslationPopup: View {
     let entry: DictionaryEntry
     let anchor: CGRect       // the word's rect in container coordinates
     let container: CGSize
@@ -139,7 +139,7 @@ private struct WordTranslationPopup: View {
 
 }
 
-private struct PopupSizeKey: PreferenceKey {
+struct PopupSizeKey: PreferenceKey {
     static var defaultValue: CGSize = .zero
     static func reduce(value: inout CGSize, nextValue: () -> CGSize) { value = nextValue() }
 }

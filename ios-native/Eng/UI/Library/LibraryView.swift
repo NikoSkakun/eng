@@ -16,9 +16,9 @@ struct LibraryView: View {
                     ContentUnavailableView {
                         Label("No documents", systemImage: "books.vertical")
                     } description: {
-                        Text("Import a PDF to start reading and building your dictionary.")
+                        Text("Import a PDF or EPUB to start reading and building your dictionary.")
                     } actions: {
-                        Button("Import PDF") { showingPicker = true }.buttonStyle(.borderedProminent)
+                        Button("Import") { showingPicker = true }.buttonStyle(.borderedProminent)
                     }
                 } else {
                     List {
@@ -44,8 +44,13 @@ struct LibraryView: View {
                 }
             }
         }
-        .fullScreenCover(item: $openDoc) { doc in ReaderView(document: doc) }
-        .fileImporter(isPresented: $showingPicker, allowedContentTypes: [.pdf], allowsMultipleSelection: true) { result in
+        .fullScreenCover(item: $openDoc) { doc in
+            switch doc.format {
+            case .pdf: ReaderView(document: doc)
+            case .epub: TextReaderView(document: doc)
+            }
+        }
+        .fileImporter(isPresented: $showingPicker, allowedContentTypes: [.pdf, .epub], allowsMultipleSelection: true) { result in
             handleImport(result)
         }
         .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
@@ -60,7 +65,8 @@ struct LibraryView: View {
 
     @ViewBuilder private func row(_ doc: LibraryDocument) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: "doc.richtext").font(.title2).foregroundStyle(.secondary).frame(width: 34)
+            Image(systemName: doc.format == .epub ? "book.closed" : "doc.richtext")
+                .font(.title2).foregroundStyle(.secondary).frame(width: 34)
             VStack(alignment: .leading, spacing: 2) {
                 Text(doc.title).font(.body).lineLimit(2)
                 Text(subtitle(doc)).font(.caption).foregroundStyle(.secondary)
@@ -74,8 +80,14 @@ struct LibraryView: View {
 
     private func subtitle(_ doc: LibraryDocument) -> String {
         var parts: [String] = []
-        if doc.pageCount > 0 { parts.append("\(doc.pageCount) pages") }
-        if doc.lastOpenedAt != nil && doc.lastPage > 1 { parts.append("on page \(doc.lastPage)") }
+        switch doc.format {
+        case .pdf:
+            if doc.pageCount > 0 { parts.append("\(doc.pageCount) pages") }
+            if doc.lastOpenedAt != nil && doc.lastPage > 1 { parts.append("on page \(doc.lastPage)") }
+        case .epub:
+            parts.append("EPUB")
+            if doc.pageCount > 0 { parts.append("\(doc.pageCount) chapters") }
+        }
         return parts.joined(separator: " · ")
     }
 

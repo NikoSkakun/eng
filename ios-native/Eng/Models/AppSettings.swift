@@ -85,6 +85,15 @@ struct AppSettings: Equatable {
     /// 32-bit ARGB color used for highlights without a per-entry color.
     var highlightColor = kDefaultHighlightColor
 
+    // Reflowable (EPUB) reader appearance — see `ReaderStyle.swift`.
+    var readerFont: ReaderFont = .serif
+    var readerFontSize: Double = kDefaultReaderFontSize
+    /// Extra points between lines (NSParagraphStyle.lineSpacing).
+    var readerLineSpacing: Double = 7
+    var readerTheme: ReaderTheme = .system
+    var readerMargin: ReaderMargin = .medium
+    var readerJustified: Bool = false
+
     /// Whether definitions can be looked up given the current learning language.
     var definitionsAvailable: Bool {
         definitionProvider != .none && kDefinitionLanguages.contains(learningLang)
